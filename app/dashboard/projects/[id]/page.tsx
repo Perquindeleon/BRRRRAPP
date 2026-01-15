@@ -43,7 +43,7 @@ export default async function ProjectDetailsPage({
     const progress = items.length > 0 ? Math.round((completedCount / items.length) * 100) : 0;
 
     return (
-        <div className="flex-1 space-y-6 p-8 pt-6">
+        <div className="flex-1 space-y-6 p-4 lg:p-8 pt-6">
             {/* Header */}
             <div className="flex flex-col space-y-2">
                 <div className="flex items-center gap-2 text-muted-foreground text-sm">
@@ -66,7 +66,7 @@ export default async function ProjectDetailsPage({
             {/* ERROR FIX: Wrapped content in ID for PDF generation */}
             <div id="project-report" className="space-y-6 bg-card p-2 rounded-xl">
                 <Tabs defaultValue="rehab" className="space-y-4">
-                    <TabsList>
+                    <TabsList className="w-full justify-start overflow-x-auto flex-nowrap bg-muted/50 p-1 mb-2">
                         <TabsTrigger value="rehab" className="flex items-center gap-2">
                             <Hammer className="h-4 w-4" /> Rehab & CapEx
                         </TabsTrigger>

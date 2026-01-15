@@ -52,11 +52,12 @@ export function DashboardCharts({ data }: { data: any }) {
                                         dataKey="name"
                                         axisLine={false}
                                         tickLine={false}
+                                        interval={typeof window !== 'undefined' && window.innerWidth < 768 ? 2 : 0}
                                         tick={{ fill: '#6B7280', fontSize: 12 }}
                                         dy={10}
                                     />
                                     <YAxis
-                                        hide={false}
+                                        hide={typeof window !== 'undefined' && window.innerWidth < 768}
                                         axisLine={false}
                                         tickLine={false}
                                         tickFormatter={(value) => `$${value / 1000}k`}

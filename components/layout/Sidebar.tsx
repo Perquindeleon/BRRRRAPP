@@ -75,13 +75,25 @@ export function Sidebar() {
 
     return (
         <>
-            {/* ... Mobile Toggle ... */}
+            {/* Mobile Header/Toggle */}
+            <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-card border-b z-50 px-4 flex items-center justify-between">
+                <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-teal-400 to-blue-400">
+                    BRRRR<span className="text-foreground">OS</span>
+                </span>
+                <button
+                    onClick={() => setIsOpen(!isOpen)}
+                    className="p-2 rounded-md hover:bg-accent focus:outline-none"
+                    aria-label="Toggle Menu"
+                >
+                    {isOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+                </button>
+            </div>
 
             {/* Sidebar Container */}
             <aside
                 className={cn(
-                    "fixed inset-y-0 left-0 z-40 w-64 bg-card border-r transform transition-transform duration-200 ease-in-out lg:translate-x-0",
-                    isOpen ? "translate-x-0" : "-translate-x-full"
+                    "fixed inset-y-0 left-0 z-40 w-64 bg-card border-r transform transition-transform duration-200 ease-in-out lg:translate-x-0 overflow-y-auto",
+                    isOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
                 )}
             >
                 <div className="flex flex-col h-full">
@@ -124,6 +136,7 @@ export function Sidebar() {
                                     ) : (
                                         <Link
                                             href={item.href}
+                                            onClick={() => setIsOpen(false)}
                                             className={cn(
                                                 "flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors",
                                                 isActive
@@ -143,6 +156,7 @@ export function Sidebar() {
                                                 <Link
                                                     key={child.href}
                                                     href={child.href}
+                                                    onClick={() => setIsOpen(false)}
                                                     className={cn(
                                                         "block px-3 py-2 text-sm font-medium rounded-md transition-colors",
                                                         pathname === child.href

@@ -159,7 +159,7 @@ export default function PortfolioView({ initialData }: { initialData: any[] }) {
                             </TabsList>
                         </div>
 
-                        <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
                             <div className="relative w-full sm:w-64">
                                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
                                 <Input
@@ -169,12 +169,14 @@ export default function PortfolioView({ initialData }: { initialData: any[] }) {
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                 />
                             </div>
-                            <Button className="bg-violet-600 hover:bg-violet-700 text-white shadow-md shadow-violet-200 transition-all hover:scale-105" onClick={() => setIsAddTenantOpen(true)}>
-                                <Users className="h-4 w-4 mr-2" /> Add Tenant
-                            </Button>
-                            <Button variant="outline" className="border-gray-200 text-gray-600 hover:bg-gray-50" onClick={() => router.push('/dashboard/properties/new')}>
-                                <Building className="h-4 w-4 mr-2" /> Add Property
-                            </Button>
+                            <div className="flex gap-2 w-full sm:w-auto">
+                                <Button className="flex-1 sm:flex-none bg-violet-600 hover:bg-violet-700 text-white shadow-md shadow-violet-200 transition-all hover:scale-105" onClick={() => setIsAddTenantOpen(true)}>
+                                    <Users className="h-4 w-4 mr-2" /> Add <span className="hidden sm:inline">Tenant</span>
+                                </Button>
+                                <Button variant="outline" className="flex-1 sm:flex-none border-gray-200 text-gray-600 hover:bg-gray-50" onClick={() => router.push('/dashboard/properties/new')}>
+                                    <Building className="h-4 w-4 mr-2" /> Add <span className="hidden sm:inline">Property</span>
+                                </Button>
+                            </div>
                         </div>
                     </div>
 
