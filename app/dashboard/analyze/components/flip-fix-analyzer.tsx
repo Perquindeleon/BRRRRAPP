@@ -142,7 +142,7 @@ export function FlipFixAnalyzer({ data, onChange }: FlipFixAnalyzerProps) {
                             onChange={setAddress}
                             onSelect={(val) => setAddress(val)}
                             label={null}
-                            className="font-bold text-md bg-background border-input"
+                            className="font-bold text-md bg-background border-input text-foreground"
                         />
                     </div>
                 </CardContent>
@@ -209,7 +209,7 @@ export function FlipFixAnalyzer({ data, onChange }: FlipFixAnalyzerProps) {
                                     <div className="p-2 px-3 flex items-center gap-2">
                                         <span className="text-slate-700 dark:text-white font-medium">Comisión por adquisición</span>
                                         <Input
-                                            className="w-12 h-6 text-xs p-1 bg-background border-input focus:ring-1 focus:ring-ring"
+                                            className="w-12 h-6 text-xs p-1 bg-background border-input text-foreground focus:ring-1 focus:ring-ring"
                                             value={acquisitionCommissionRate}
                                             onChange={e => setAcquisitionCommissionRate(Number(e.target.value))}
                                         />
@@ -362,13 +362,13 @@ function TableLikeRow({ label, value, onChange, currency, isPercent, isDate, bg,
                         type="date"
                         value={value}
                         onChange={e => onChange(e.target.value)}
-                        className="h-7 text-right px-1 bg-background border-input hover:border-accent focus:border-ring rounded-sm"
+                        className="h-7 text-right px-1 bg-background border-input text-foreground hover:border-accent focus:border-ring rounded-sm"
                     />
                 ) : currency ? (
                     <FormattedCurrencyInput
                         value={value}
                         onChange={onChange}
-                        className={cn("h-7 text-right px-1 bg-background border-input hover:border-accent focus:border-ring rounded-sm font-bold", colorClass)}
+                        className={cn("h-7 text-right px-1 bg-background border-input text-foreground hover:border-accent focus:border-ring rounded-sm font-bold", colorClass)}
                     />
                 ) : (
                     <div className="relative">
@@ -376,7 +376,7 @@ function TableLikeRow({ label, value, onChange, currency, isPercent, isDate, bg,
                             type="number"
                             value={value}
                             onChange={e => onChange(Number(e.target.value))}
-                            className={cn("h-7 text-right px-1 bg-background border-input hover:border-accent focus:border-ring rounded-sm font-bold", colorClass, isPercent && "pr-6")}
+                            className={cn("h-7 text-right px-1 bg-background border-input text-foreground hover:border-accent focus:border-ring rounded-sm font-bold", colorClass, isPercent && "pr-6")}
                         />
                         {isPercent && <span className="absolute right-1 top-1 text-xs text-muted-foreground">%</span>}
                     </div>
