@@ -231,7 +231,9 @@ export async function updateTenant(formData: FormData) {
         lease_start: formData.get("lease_start") as string || null,
         lease_end: formData.get("lease_end") as string || null,
         status: formData.get("status") as string || 'active',
-        unit_number: formData.get("unit_number") as string || null
+        unit_number: formData.get("unit_number") as string || null,
+        late_fee_day: parseInt(formData.get("late_fee_day") as string) || 5,
+        late_fee_pct: parseFloat(formData.get("late_fee_pct") as string) ?? 10,
     };
 
     if (contractUrl) data.contract_url = contractUrl;

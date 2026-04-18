@@ -922,6 +922,45 @@ export default function TenantsView({ initialData }: { initialData: any[] }) {
                                 </SelectContent>
                             </Select>
                         </div>
+
+                        {/* Late Fee Config */}
+                        <div className="p-3 rounded-xl border border-border bg-muted/30 space-y-3">
+                            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Late Fee Settings</p>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-semibold text-gray-500">Due Day of Month</label>
+                                    <div className="relative">
+                                        <Input
+                                            name="late_fee_day"
+                                            type="number"
+                                            min={1}
+                                            max={28}
+                                            defaultValue={selectedTenant.late_fee_day ?? 5}
+                                            className="focus-visible:ring-violet-500"
+                                        />
+                                        <span className="absolute right-3 top-2.5 text-xs text-muted-foreground">day</span>
+                                    </div>
+                                    <p className="text-[10px] text-muted-foreground">Rent is due on this day each month</p>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-semibold text-gray-500">Late Fee</label>
+                                    <div className="relative">
+                                        <Input
+                                            name="late_fee_pct"
+                                            type="number"
+                                            min={0}
+                                            max={50}
+                                            step={0.5}
+                                            defaultValue={selectedTenant.late_fee_pct ?? 10}
+                                            className="focus-visible:ring-violet-500"
+                                        />
+                                        <span className="absolute right-3 top-2.5 text-xs text-muted-foreground">%</span>
+                                    </div>
+                                    <p className="text-[10px] text-muted-foreground">Added after the due day</p>
+                                </div>
+                            </div>
+                        </div>
+
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-gray-500 uppercase">Signed Lease Contract</label>
                             {selectedTenant.contract_url && (
