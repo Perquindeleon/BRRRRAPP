@@ -19,6 +19,7 @@ import { BrrrrStrategyVisual } from "./brrrr-strategy-visual";
 import { AiAdvisorControls, AiAdvisorResults } from "./ai-advisor";
 import { generateDealAnalysis } from "../actions";
 import { FlipFixAnalyzer } from "./flip-fix-analyzer";
+import { RehabEstimatorModal } from "./rehab-estimator-modal";
 import {
     Calculator,
     Save,
@@ -31,16 +32,19 @@ import {
     ChevronRight,
     CheckCircle2,
     AlertCircle,
-    Loader2
+    Loader2,
+    Hammer,
+    ToggleLeft,
+    ToggleRight,
 } from "lucide-react";
 
-export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: any, mode?: 'create' | 'edit' }) {
+export function AnalyzerForm({ initialData, mode = 'create', initialStrategy }: { initialData?: any, mode?: 'create' | 'edit', initialStrategy?: 'brrrr' | 'flip_fix' }) {
     const router = useRouter();
     const supabase = createClient();
     const [loading, setLoading] = useState(false);
 
     // --- State: Strategy Selection ---
-    const [strategy, setStrategy] = useState<'brrrr' | 'flip_fix'>('brrrr');
+    const [strategy, setStrategy] = useState<'brrrr' | 'flip_fix'>(initialStrategy ?? 'brrrr');
 
     // --- State: FLIP & FIX ---
     // We keep a single object state for Flip & Fix to easily pass it down
@@ -90,7 +94,14 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
     const [address, setAddress] = useState(initialData?.address || "");
     const [purchasePrice, setPurchasePrice] = useState(initialData?.purchase_price || 0);
     const [closingCostsBuy, setClosingCostsBuy] = useState(initialData?.financials?.closing_costs_buy || (mode === 'edit' ? 3000 : 0));
+    const [closingCostsMode, setClosingCostsMode] = useState<'$' | '%'>('$');
     const [rehabBudget, setRehabBudget] = useState(initialData?.financials?.rehab_cost || 0);
+    const [rehabModalOpen, setRehabModalOpen] = useState(false);
+
+    // --- State: Rentcast Rent Estimate ---
+    const [rentEstimate, setRentEstimate] = useState<{ rent: number; low: number; high: number } | null>(null);
+    const [rentEstimateLoading, setRentEstimateLoading] = useState(false);
+    const [rentEstimateFetched, setRentEstimateFetched] = useState(false);
     const [projectDuration, setProjectDuration] = useState(initialData?.financials?.project_duration_months || (mode === 'edit' ? 4 : 0));
 
     // --- State: Initial Financing ---
@@ -113,6 +124,38 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
     const [capexRate, setCapexRate] = useState(initialData?.financials?.capex_rate || 5);
     const [managementRate, setManagementRate] = useState(initialData?.financials?.management_rate || 8);
     const [marketingCost, setMarketingCost] = useState(0);
+
+    // --- Rentcast Rent Estimate logic (after all state declarations) ---
+    const fetchRentEstimate = async (addr: string) => {
+        if (!addr) return;
+        setRentEstimateLoading(true);
+        setRentEstimateFetched(true);
+        try {
+            const res = await fetch(`/api/rent-estimate?address=${encodeURIComponent(addr)}`);
+            const data = await res.json();
+            if (res.ok && data.rent) {
+                setRentEstimate({ rent: data.rent, low: data.rentRangeLow ?? data.rent, high: data.rentRangeHigh ?? data.rent });
+            }
+        } catch {
+            // silently fail — non-critical
+        } finally {
+            setRentEstimateLoading(false);
+        }
+    };
+
+    // Reset estimate whenever address changes
+    useEffect(() => {
+        setRentEstimate(null);
+        setRentEstimateFetched(false);
+    }, [address]);
+
+    // Auto-fetch when user opens EXP tab and has an address
+    useEffect(() => {
+        if (activeTab === 'expense' && address && !rentEstimateFetched && !rentEstimateLoading) {
+            fetchRentEstimate(address);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, address]);
 
     // Initialize AI Analysis from saved data if available
     useEffect(() => {
@@ -165,6 +208,32 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
             ? (annualCashFlow / cashLeftInDeal) * 100
             : 0;
     const dscr = monthlyRefiPrincipalInterest > 0 ? (netOperatingIncome / monthlyRefiPrincipalInterest) : 0;
+
+    // --- Tab completion ---
+    const tabDone = {
+        buy:     purchasePrice > 0,
+        refi:    arv > 0,
+        expense: monthlyRent > 0,
+    };
+
+    // --- Deal Verdict ---
+    const dealVerdict = (() => {
+        if (purchasePrice === 0 || arv === 0 || monthlyRent === 0) return null;
+        if (cocReturn >= 999 || (cocReturn >= 15 && dscr >= 1.25 && monthlyCashFlow >= 200))
+            return { label: "Home Run",   color: "emerald", icon: "🚀" } as const;
+        if (cocReturn >= 8  && dscr >= 1.25 && monthlyCashFlow > 0)
+            return { label: "Solid Deal", color: "blue",    icon: "✅" } as const;
+        if (cocReturn >  0  && monthlyCashFlow > 0)
+            return { label: "Break Even", color: "yellow",  icon: "⚖️" } as const;
+        return   { label: "Pass",       color: "red",     icon: "❌" } as const;
+    })();
+
+    const verdictStyles = {
+        emerald: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+        blue:    "bg-blue-500/10    text-blue-400    border-blue-500/30",
+        yellow:  "bg-yellow-500/10  text-yellow-400  border-yellow-500/30",
+        red:     "bg-red-500/10     text-red-400     border-red-500/30",
+    };
 
     // --- Demo Data ---
 
@@ -281,24 +350,38 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
                         <h2 className="text-3xl font-bold tracking-tight text-foreground">Property Analyzer</h2>
                         <p className="text-muted-foreground">Calculate metrics for your next real estate investment.</p>
                     </div>
-                    {/* STRATEGY TOGGLE */}
-                    <div className="flex items-center gap-2 bg-muted/50 p-1 rounded-lg w-fit">
-                        <Button
-                            variant={strategy === 'brrrr' ? 'default' : 'ghost'}
-                            size="sm"
+                    {/* STRATEGY SELECTOR */}
+                    <div className="flex gap-2">
+                        <button
+                            type="button"
                             onClick={() => setStrategy('brrrr')}
-                            className={cn(strategy === 'brrrr' && "shadow-sm")}
+                            className={cn(
+                                "flex-1 sm:flex-none flex flex-col items-start gap-0.5 rounded-lg border px-4 py-2.5 text-left transition-all",
+                                strategy === 'brrrr'
+                                    ? "border-primary bg-primary/10 shadow-sm"
+                                    : "border-border bg-muted/20 hover:bg-muted/40"
+                            )}
                         >
-                            BRRRR Strategy
-                        </Button>
-                        <Button
-                            variant={strategy === 'flip_fix' ? 'default' : 'ghost'}
-                            size="sm"
+                            <span className={cn("text-xs font-extrabold uppercase tracking-wide", strategy === 'brrrr' ? "text-primary" : "text-muted-foreground")}>
+                                🔄 BRRRR
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">Buy · Rehab · Rent · Refi · Repeat</span>
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => setStrategy('flip_fix')}
-                            className={cn(strategy === 'flip_fix' && "bg-blue-600 hover:bg-blue-700 text-white shadow-sm")}
+                            className={cn(
+                                "flex-1 sm:flex-none flex flex-col items-start gap-0.5 rounded-lg border px-4 py-2.5 text-left transition-all",
+                                strategy === 'flip_fix'
+                                    ? "border-blue-500 bg-blue-500/10 shadow-sm"
+                                    : "border-border bg-muted/20 hover:bg-muted/40"
+                            )}
                         >
-                            Flip & Fix
-                        </Button>
+                            <span className={cn("text-xs font-extrabold uppercase tracking-wide", strategy === 'flip_fix' ? "text-blue-400" : "text-muted-foreground")}>
+                                🔨 Flip &amp; Fix
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">Buy · Rehab · Sell · Profit</span>
+                        </button>
                     </div>
                 </div>
                 <div className="flex gap-2">
@@ -311,6 +394,14 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
                     </Button>
                 </div>
             </div>
+
+            {/* Rehab Estimator Modal */}
+            <RehabEstimatorModal
+                isOpen={rehabModalOpen}
+                onClose={() => setRehabModalOpen(false)}
+                onApply={(amount) => setRehabBudget(amount)}
+                purchasePrice={purchasePrice}
+            />
 
             {strategy === 'flip_fix' ? (
                 <FlipFixAnalyzer
@@ -326,9 +417,15 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
                             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
                                 <div className="px-6 pt-6">
                                     <TabsList className="grid w-full grid-cols-5 bg-muted p-1 rounded-lg border border-border">
-                                        <TabsTrigger value="buy" className="val-tab text-[10px] sm:text-xs">BUY</TabsTrigger>
-                                        <TabsTrigger value="refi" className="val-tab text-[10px] sm:text-xs">REFI</TabsTrigger>
-                                        <TabsTrigger value="expense" className="val-tab text-[10px] sm:text-xs">EXP</TabsTrigger>
+                                        <TabsTrigger value="buy" className="val-tab text-[10px] sm:text-xs gap-1">
+                                            BUY {tabDone.buy     ? <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shrink-0" /> : <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 inline-block shrink-0" />}
+                                        </TabsTrigger>
+                                        <TabsTrigger value="refi" className="val-tab text-[10px] sm:text-xs gap-1">
+                                            REFI {tabDone.refi    ? <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shrink-0" /> : <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 inline-block shrink-0" />}
+                                        </TabsTrigger>
+                                        <TabsTrigger value="expense" className="val-tab text-[10px] sm:text-xs gap-1">
+                                            EXP {tabDone.expense  ? <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shrink-0" /> : <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30 inline-block shrink-0" />}
+                                        </TabsTrigger>
                                         <TabsTrigger value="strategy" className="val-tab text-[10px] sm:text-xs font-bold text-indigo-600">STRATEGY</TabsTrigger>
                                         <TabsTrigger value="ai-advisor" className="val-tab text-[10px] sm:text-xs font-bold text-violet-600 flex gap-1 items-center">
                                             <div className="bg-violet-600 text-[8px] px-1 rounded text-white leading-none py-0.5">AI</div>
@@ -365,17 +462,73 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
                                                 />
                                             </div>
 
+                                            {/* Closing Costs with $/% toggle */}
                                             <div className="space-y-1.5">
-                                                <Label>Closing Costs (Buy)</Label>
-                                                <FormattedCurrencyInput
-                                                    value={closingCostsBuy}
-                                                    onChange={setClosingCostsBuy}
-                                                    placeholder="e.g. 3,000"
-                                                />
+                                                <div className="flex items-center justify-between">
+                                                    <Label>Closing Costs (Buy)</Label>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (closingCostsMode === '$') {
+                                                                setClosingCostsMode('%');
+                                                            } else {
+                                                                setClosingCostsMode('$');
+                                                            }
+                                                        }}
+                                                        className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors"
+                                                    >
+                                                        {closingCostsMode === '$'
+                                                            ? <><ToggleLeft className="h-3.5 w-3.5" /> Switch to %</>
+                                                            : <><ToggleRight className="h-3.5 w-3.5 text-primary" /> Switch to $</>
+                                                        }
+                                                    </button>
+                                                </div>
+                                                {closingCostsMode === '$' ? (
+                                                    <FormattedCurrencyInput
+                                                        value={closingCostsBuy}
+                                                        onChange={setClosingCostsBuy}
+                                                        placeholder="e.g. 3,000"
+                                                    />
+                                                ) : (
+                                                    <div className="space-y-1">
+                                                        <div className="relative">
+                                                            <Input
+                                                                type="number"
+                                                                step="0.1"
+                                                                min="0"
+                                                                max="10"
+                                                                className="pr-8 input-light"
+                                                                placeholder="e.g. 2.5"
+                                                                value={purchasePrice > 0 ? ((closingCostsBuy / purchasePrice) * 100).toFixed(2) : ""}
+                                                                onChange={e => {
+                                                                    const pct = parseFloat(e.target.value) || 0;
+                                                                    setClosingCostsBuy(purchasePrice * (pct / 100));
+                                                                }}
+                                                            />
+                                                            <Percent className="absolute right-3 top-2.5 h-4 w-4 text-slate-400" />
+                                                        </div>
+                                                        {purchasePrice > 0 && (
+                                                            <p className="text-[10px] text-muted-foreground text-right">
+                                                                = ${Math.round(closingCostsBuy).toLocaleString()}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
 
+                                            {/* Rehab Budget with AI Estimator button */}
                                             <div className="space-y-1.5">
-                                                <LabelWithTooltip label="Rehab Budget" tooltip="Estimated costs for repairs and renovations. Use the AI Estimator if unsure." />
+                                                <div className="flex items-center justify-between">
+                                                    <LabelWithTooltip label="Rehab Budget" tooltip="Estimated costs for repairs and renovations. Use the AI Estimator if unsure." />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setRehabModalOpen(true)}
+                                                        className="flex items-center gap-1 text-[10px] font-bold text-violet-400 hover:text-violet-300 transition-colors"
+                                                    >
+                                                        <Hammer className="h-3 w-3" />
+                                                        AI Estimator
+                                                    </button>
+                                                </div>
                                                 <FormattedCurrencyInput
                                                     value={rehabBudget}
                                                     onChange={setRehabBudget}
@@ -448,13 +601,54 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
                                     <TabsContent value="expense" className="space-y-6 mt-0">
                                         <div className="space-y-5">
                                             <div className="space-y-1.5">
-                                                <Label>Monthly Rent</Label>
+                                                <div className="flex items-center justify-between">
+                                                    <Label>Monthly Rent</Label>
+                                                    {address && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => fetchRentEstimate(address)}
+                                                            disabled={rentEstimateLoading}
+                                                            className="flex items-center gap-1 text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
+                                                        >
+                                                            {rentEstimateLoading
+                                                                ? <><Loader2 className="h-3 w-3 animate-spin" /> Fetching…</>
+                                                                : <><TrendingUp className="h-3 w-3" /> Rentcast Estimate</>
+                                                            }
+                                                        </button>
+                                                    )}
+                                                </div>
                                                 <FormattedCurrencyInput
                                                     value={monthlyRent}
                                                     onChange={setMonthlyRent}
                                                     placeholder="e.g. 2,200"
                                                     className="h-11 text-lg font-semibold input-light"
                                                 />
+
+                                                {/* Rentcast suggestion */}
+                                                {rentEstimate && (
+                                                    <div className="flex items-center justify-between rounded-lg border border-blue-500/25 bg-blue-500/8 px-3 py-2 mt-1">
+                                                        <div>
+                                                            <p className="text-[10px] font-extrabold uppercase tracking-widest text-blue-400">Rentcast Estimate</p>
+                                                            <p className="text-xs text-muted-foreground mt-0.5">
+                                                                ${rentEstimate.low.toLocaleString()} – ${rentEstimate.high.toLocaleString()}/mo
+                                                            </p>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setMonthlyRent(rentEstimate.rent)}
+                                                            className="text-xs font-bold text-blue-400 hover:text-blue-300 border border-blue-500/30 rounded-md px-2.5 py-1 transition-colors hover:bg-blue-500/10"
+                                                        >
+                                                            Use ${rentEstimate.rent.toLocaleString()}
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {/* No address hint */}
+                                                {!address && (
+                                                    <p className="text-[10px] text-muted-foreground/60 mt-1">
+                                                        Enter a property address in BUY tab to get a Rentcast rent estimate.
+                                                    </p>
+                                                )}
                                             </div>
                                         </div>
 
@@ -497,6 +691,47 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
                                                 <p className="text-[9px] text-muted-foreground text-right">Typ: 8-10%</p>
                                             </div>
                                         </div>
+
+                                        {/* Live expense breakdown */}
+                                        {monthlyRent > 0 && (
+                                            <div className="mt-4 pt-4 border-t border-border space-y-2">
+                                                <p className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">Rent Breakdown</p>
+                                                {[
+                                                    { label: "Mortgage (P&I)", amount: monthlyRefiPrincipalInterest, color: "bg-indigo-500" },
+                                                    { label: "Vacancy",        amount: monthlyVacancy,               color: "bg-yellow-500" },
+                                                    { label: "CapEx",          amount: monthlyCapex,                 color: "bg-orange-500" },
+                                                    { label: "Management",     amount: monthlyManagement,            color: "bg-purple-500" },
+                                                    { label: "Taxes",          amount: monthlyTaxes,                 color: "bg-blue-400" },
+                                                    { label: "Insurance",      amount: monthlyInsurance,             color: "bg-sky-400" },
+                                                ].filter(r => r.amount > 0).map(({ label, amount, color }) => (
+                                                    <div key={label} className="flex items-center gap-2">
+                                                        <span className="text-[10px] text-muted-foreground w-24 shrink-0">{label}</span>
+                                                        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                                                            <div
+                                                                className={`h-full rounded-full ${color}`}
+                                                                style={{ width: `${Math.min((amount / monthlyRent) * 100, 100)}%` }}
+                                                            />
+                                                        </div>
+                                                        <span className="text-[10px] font-semibold tabular-nums w-12 text-right shrink-0">
+                                                            ${Math.round(amount).toLocaleString()}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                                {/* Cash flow row */}
+                                                <div className="flex items-center gap-2 pt-1 border-t border-dashed border-border">
+                                                    <span className="text-[10px] font-bold text-muted-foreground w-24 shrink-0">Cash Flow</span>
+                                                    <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                                                        <div
+                                                            className={`h-full rounded-full ${monthlyCashFlow >= 0 ? "bg-emerald-500" : "bg-red-500"}`}
+                                                            style={{ width: `${Math.min(Math.abs(monthlyCashFlow / monthlyRent) * 100, 100)}%` }}
+                                                        />
+                                                    </div>
+                                                    <span className={`text-[10px] font-bold tabular-nums w-12 text-right shrink-0 ${monthlyCashFlow >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                                        {monthlyCashFlow >= 0 ? "+" : "-"}${Math.abs(Math.round(monthlyCashFlow)).toLocaleString()}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        )}
                                     </TabsContent>
 
                                     {/* --- TAB 4: STRATEGY --- */}
@@ -528,6 +763,16 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
 
                             {/* --- FOOTER --- */}
                             <div className="bg-slate-950 text-white p-6 space-y-5 rounded-md shadow-inner border border-slate-800">
+                                {/* Deal Verdict */}
+                                {dealVerdict && (
+                                    <div className={`flex items-center justify-between rounded-lg border px-4 py-2.5 mb-1 ${verdictStyles[dealVerdict.color]}`}>
+                                        <span className="text-xs font-extrabold uppercase tracking-widest opacity-70">Deal Verdict</span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-base">{dealVerdict.icon}</span>
+                                            <span className="font-black text-base tracking-tight">{dealVerdict.label}</span>
+                                        </div>
+                                    </div>
+                                )}
                                 {/* Cash Flow */}
                                 <div className="flex justify-between items-center border-b border-slate-800 pb-3 border-dashed">
                                     <div className="flex items-center gap-2">
@@ -618,6 +863,40 @@ export function AnalyzerForm({ initialData, mode = 'create' }: { initialData?: a
                             </div>
                         ) : (
                             <>
+                                {/* Onboarding guide — shown until all 3 tabs are filled */}
+                                {(!tabDone.buy || !tabDone.refi || !tabDone.expense) && (
+                                    <div className="rounded-lg border border-dashed border-border bg-muted/20 p-6">
+                                        <p className="text-xs font-extrabold uppercase tracking-widest text-muted-foreground mb-4">Complete your analysis</p>
+                                        <div className="flex flex-col sm:flex-row gap-3">
+                                            {[
+                                                { step: 1, tab: "BUY",  label: "Purchase Price + Rehab",  done: tabDone.buy },
+                                                { step: 2, tab: "REFI", label: "ARV + Refinance terms",   done: tabDone.refi },
+                                                { step: 3, tab: "EXP",  label: "Monthly Rent + Expenses", done: tabDone.expense },
+                                            ].map(({ step, tab, label, done }) => (
+                                                <button
+                                                    key={tab}
+                                                    onClick={() => setActiveTab(tab === "BUY" ? "buy" : tab === "REFI" ? "refi" : "expense")}
+                                                    className={cn(
+                                                        "flex-1 flex items-center gap-3 rounded-md border px-4 py-3 text-left transition-colors hover:bg-accent",
+                                                        done ? "border-emerald-500/30 bg-emerald-500/5" : "border-border bg-background"
+                                                    )}
+                                                >
+                                                    <div className={cn(
+                                                        "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+                                                        done ? "bg-emerald-500 text-white" : "bg-muted text-muted-foreground"
+                                                    )}>
+                                                        {done ? "✓" : step}
+                                                    </div>
+                                                    <div>
+                                                        <p className={cn("text-xs font-bold uppercase tracking-wide", done ? "text-emerald-400" : "text-foreground")}>{tab}</p>
+                                                        <p className="text-xs text-muted-foreground">{label}</p>
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
                                 <BrrrrChart
                                     initialArv={arv}
                                     loanAmount={refiLoanAmount}

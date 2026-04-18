@@ -13,10 +13,14 @@ export async function addProperty(prevState: any, formData: FormData) {
     const zip = formData.get("zip") as string;
     const status = formData.get("status") as string;
     const purchasePrice = parseFloat(formData.get("purchase_price") as string) || 0;
+    const propertyType = formData.get("property_type") as string || "sfh";
+    const units = parseInt(formData.get("units") as string) || 1;
 
     // Financials
     const rehabCost = parseFloat(formData.get("rehab_cost") as string) || 0;
-    const monthlyRent = parseFloat(formData.get("monthly_rent") as string) || 0;
+    const rentPerUnit = parseFloat(formData.get("monthly_rent") as string) || 0;
+    // For multifamily, total rent = rent per unit × number of units
+    const monthlyRent = propertyType === "multifamily" ? rentPerUnit * units : rentPerUnit;
     const taxesAnnual = parseFloat(formData.get("taxes_annual") as string) || 0;
     const insuranceAnnual = parseFloat(formData.get("insurance_annual") as string) || 0;
     const vacancyRate = parseFloat(formData.get("vacancy_rate") as string) || 5;
@@ -31,7 +35,7 @@ export async function addProperty(prevState: any, formData: FormData) {
     }
 
     // 1. Insert Property
-    const { data: property, error: propError } = await supabase.from("properties").insert({
+    const propertyInsert: Record<string, any> = {
         user_id: user.id,
         address,
         city,
@@ -39,8 +43,16 @@ export async function addProperty(prevState: any, formData: FormData) {
         zip,
         status,
         purchase_price: purchasePrice,
-        arv_estimate: arv
-    }).select().single();
+        arv_estimate: arv,
+    };
+    if (propertyType) propertyInsert.property_type = propertyType;
+    if (units > 1)     propertyInsert.units = units;
+
+    const { data: property, error: propError } = await supabase
+        .from("properties")
+        .insert(propertyInsert)
+        .select()
+        .single();
 
     if (propError) {
         console.error("Error adding property:", propError);
@@ -70,6 +82,57 @@ export async function addProperty(prevState: any, formData: FormData) {
     revalidatePath("/dashboard/properties");
     revalidatePath("/dashboard/projects");
     return redirect(`/dashboard/projects/${property.id}`);
+}
+
+export async function updateProperty(formData: FormData) {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: "Unauthorized" };
+
+    const id = formData.get("id") as string;
+    const propertyType = formData.get("property_type") as string;
+    const units = parseInt(formData.get("units") as string) || 1;
+
+    const update: Record<string, any> = {
+        address:        formData.get("address") as string,
+        city:           formData.get("city") as string,
+        state:          formData.get("state") as string,
+        zip:            formData.get("zip") as string,
+        status:         formData.get("status") as string,
+        purchase_price: parseFloat(formData.get("purchase_price") as string) || 0,
+        arv_estimate:   parseFloat(formData.get("arv_estimate") as string) || 0,
+    };
+
+    if (propertyType) update.property_type = propertyType;
+    if (propertyType === "multifamily") update.units = units;
+    else update.units = 1;
+
+    const { error } = await supabase
+        .from("properties")
+        .update(update)
+        .eq("id", id)
+        .eq("user_id", user.id);
+
+    if (error) return { error: error.message };
+
+    // Update financials too
+    const monthlyRent = parseFloat(formData.get("monthly_rent") as string) || 0;
+    const taxesAnnual = parseFloat(formData.get("taxes_annual") as string) || 0;
+    const insuranceAnnual = parseFloat(formData.get("insurance_annual") as string) || 0;
+    const rehabCost = parseFloat(formData.get("rehab_cost") as string) || 0;
+
+    await supabase.from("financials").upsert({
+        property_id: id,
+        monthly_rent: propertyType === "multifamily" ? monthlyRent * units : monthlyRent,
+        taxes_annual: taxesAnnual,
+        insurance_annual: insuranceAnnual,
+        rehab_cost: rehabCost,
+    }, { onConflict: "property_id" });
+
+    revalidatePath("/dashboard/properties");
+    revalidatePath("/dashboard/projects");
+    revalidatePath("/dashboard/tenants");
+    return { success: true };
 }
 
 export async function addToPortfolio(id: string) {

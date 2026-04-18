@@ -75,10 +75,21 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Hide number input spinners */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
 }
 
 @layer components {
   .input-light {
-    @apply bg-background text-foreground border-input;
+    @apply bg-background text-blue-900 dark:text-white border-input;
   }
 }

@@ -141,6 +141,43 @@ export async function getDashboardMetrics() {
         });
     }
 
+    // Fetch maintenance requests
+    const { data: maintenanceData } = await supabase
+        .from("maintenance_requests")
+        .select("id, status, actual_cost, category, closed_at, property_id, title, priority")
+        .eq("user_id", user.id);
+
+    const maintenanceRequests = maintenanceData || [];
+    const openMaintenance = maintenanceRequests.filter(r => r.status === "open").length;
+    const totalMaintenanceSpent = maintenanceRequests.reduce((s, r) => s + (r.actual_cost || 0), 0);
+
+    // Group maintenance spend by month (last 6 months)
+    const maintenanceByMonth: Record<string, number> = {};
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        maintenanceByMonth[d.toLocaleString("default", { month: "short", year: "2-digit" })] = 0;
+    }
+    maintenanceRequests.forEach(r => {
+        if (!r.closed_at || !r.actual_cost) return;
+        const d = new Date(r.closed_at);
+        const key = d.toLocaleString("default", { month: "short", year: "2-digit" });
+        if (key in maintenanceByMonth) {
+            maintenanceByMonth[key] += r.actual_cost;
+        }
+    });
+    const maintenanceTrend = Object.entries(maintenanceByMonth).map(([name, value]) => ({ name, value }));
+
+    // Group by category
+    const byCat: Record<string, number> = {};
+    maintenanceRequests.forEach(r => {
+        if (!r.actual_cost) return;
+        byCat[r.category || "general"] = (byCat[r.category || "general"] || 0) + r.actual_cost;
+    });
+    const maintenanceByCategory = Object.entries(byCat)
+        .map(([name, value]) => ({ name: name.charAt(0).toUpperCase() + name.slice(1), value }))
+        .sort((a, b) => b.value - a.value);
+
     // Fetch reminders
     const { data: dbReminders, error: remError } = await supabase
         .from('reminders')
@@ -164,18 +201,58 @@ export async function getDashboardMetrics() {
         maintenanceAlerts = [...maintenanceAlerts, ...mappedReminders];
     }
 
-    // Calculate final Average
     const avgRoi = roiCount > 0 ? roiSum / roiCount : 0;
+
+    // Total portfolio value (sum of ARV or purchase price)
+    const totalPortfolioValue = properties.reduce((sum, p) => sum + (p.arv_estimate || p.purchase_price || 0), 0);
+
+    // Per-property summary for the "at a glance" table
+    const propertySummaries = properties.map(prop => {
+        const fin  = prop.financials?.[0];
+        const tenant = prop.tenants?.[0];
+        const value   = prop.arv_estimate || prop.purchase_price || 0;
+        const ltv     = fin?.refinance_ltv || 75;
+        const loan    = value * (ltv / 100);
+        const equity  = value - loan;
+
+        let cashFlow = 0;
+        if (fin) {
+            const rent  = prop.tenants?.reduce((s: number, t: any) => s + (t.status === 'active' ? (t.rent_amount || 0) : 0), 0) || 0;
+            const taxes = (fin.taxes_annual || 0) / 12;
+            const ins   = (fin.insurance_annual || 0) / 12;
+            const mgmt  = rent * ((fin.management_rate || 0) / 100);
+            const r     = (fin.refinance_rate || 7) / 100 / 12;
+            const n     = 360;
+            const debt  = loan > 0 && r > 0 ? (loan * r) / (1 - Math.pow(1 + r, -n)) : 0;
+            cashFlow    = rent - (taxes + ins + mgmt + debt);
+        }
+
+        return {
+            id:        prop.id,
+            address:   prop.address || "—",
+            status:    prop.status  || "analyzing",
+            value,
+            equity,
+            cashFlow,
+            rent: tenant?.rent_amount || 0,
+        };
+    });
 
     return {
         stats: {
             totalEquity,
+            totalPortfolioValue,
             monthlyCashFlow,
             totalProperties,
             activeRehabs,
-            avgRoi // Returning the calculated metric
+            avgRoi,
+            openMaintenance,
+            totalMaintenanceSpent,
         },
         equityTrend,
-        maintenanceAlerts
+        maintenanceAlerts,
+        propertySummaries,
+        maintenanceTrend,
+        maintenanceByCategory,
     };
 }

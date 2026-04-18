@@ -21,7 +21,8 @@ import {
     Bookmark,
     LayoutDashboard,
     Users,
-    LogOut
+    LogOut,
+    Wrench
 } from "lucide-react";
 import { useState } from "react";
 import { useLanguage } from "@/components/providers/LanguageProvider";
@@ -52,6 +53,8 @@ export function Sidebar() {
         { label: t('sidebar.analyze'), href: "/dashboard/analyze", icon: Calculator },
         { label: t('sidebar.saved'), href: "/dashboard/saved-deals", icon: Bookmark },
         { label: t('sidebar.properties'), href: "/dashboard/properties", icon: Building },
+        { label: t('sidebar.tenants'), href: "/dashboard/tenants", icon: Users },
+        { label: t('sidebar.maintenance'), href: "/dashboard/maintenance", icon: Wrench },
         {
             label: t('sidebar.projects'),
             href: "/dashboard/projects",

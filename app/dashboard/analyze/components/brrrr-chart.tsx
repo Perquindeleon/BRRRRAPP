@@ -1,8 +1,6 @@
 "use client";
 
 import {
-    LineChart,
-    Line,
     XAxis,
     YAxis,
     CartesianGrid,
@@ -13,6 +11,7 @@ import {
     Area
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { TrendingUp } from "lucide-react";
 
 interface BrrrrChartProps {
     initialArv: number;
@@ -21,6 +20,23 @@ interface BrrrrChartProps {
 }
 
 export function BrrrrChart({ initialArv, loanAmount, interestRate }: BrrrrChartProps) {
+    if (initialArv === 0) {
+        return (
+            <Card className="h-[350px] flex flex-col">
+                <CardHeader>
+                    <CardTitle className="text-base">30-Year Wealth Projection (Equity vs Loan)</CardTitle>
+                </CardHeader>
+                <CardContent className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                    <TrendingUp className="h-12 w-12 opacity-15" />
+                    <div className="text-center">
+                        <p className="font-medium text-sm">Enter ARV to see your 30-year projection</p>
+                        <p className="text-xs text-muted-foreground/60 mt-1">Go to the REFI tab → After Repair Value</p>
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    }
+
     // Generate 30-year projection data purely client-side for speed
     const data = [];
     const appreciationRate = 0.03; // 3% annual appreciation

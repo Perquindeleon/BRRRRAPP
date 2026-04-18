@@ -5,138 +5,156 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { FormattedCurrencyInput } from "@/components/ui/formatted-currency-input";
-import { AddressAutocomplete } from "@/components/properties/address-autocomplete"; // Import AddressAutocomplete
+import { AddressAutocomplete } from "@/components/properties/address-autocomplete";
 import { FlipFixCharts } from "./flip-fix-charts";
+import { RehabEstimatorModal } from "./rehab-estimator-modal";
 import { cn } from "@/lib/utils";
+import { format } from "date-fns";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { CalendarIcon, Hammer, TrendingUp, TrendingDown, DollarSign, Clock, Percent } from "lucide-react";
 
 interface FlipFixAnalyzerProps {
     data: any;
     onChange: (data: any) => void;
 }
 
+// ─── Deal Verdict ─────────────────────────────────────────────────────────────
+
+function getDealVerdict(roi: number, netProfit: number, cashRequired: number) {
+    if (cashRequired === 0) return null;
+    if (roi >= 20 && netProfit > 0) return { label: "Hot Deal",    icon: "🔥", color: "emerald" } as const;
+    if (roi >= 12 && netProfit > 0) return { label: "Good Deal",   icon: "✅", color: "blue"    } as const;
+    if (roi >= 5  && netProfit > 0) return { label: "Marginal",    icon: "⚖️", color: "yellow"  } as const;
+    return                                 { label: "Pass",        icon: "❌", color: "red"     } as const;
+}
+
+const VERDICT_STYLES = {
+    emerald: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+    blue:    "bg-blue-500/10    text-blue-400    border-blue-500/30",
+    yellow:  "bg-yellow-500/10  text-yellow-400  border-yellow-500/30",
+    red:     "bg-red-500/10     text-red-400     border-red-500/30",
+};
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export function FlipFixAnalyzer({ data, onChange }: FlipFixAnalyzerProps) {
-    // --- State Initialization ---
-    // If the parent passes data, use it. Otherwise defaults.
-    // NOTE: We need to sync local calculations back to parent for saving.
+    const [address,       setAddress]       = useState(data?.address || "");
+    const [purchasePrice, setPurchasePrice] = useState(data?.purchase_price || 0);
+    const [repairs,       setRepairs]       = useState(data?.financials?.rehab_cost || 0);
+    const [arv,           setArv]           = useState(data?.arv_estimate || 0);
+    const [closingDate,   setClosingDate]   = useState(data?.closing_date || "");
+    const [rehabModalOpen, setRehabModalOpen] = useState(false);
 
-    const [address, setAddress] = useState(data?.address || "5920 Forest Haven Trail Dallas TX 75232"); // Default from screenshot
+    // Details
+    const [livingArea,      setLivingArea]      = useState(data?.living_area || 0);
+    const [projectMonths,   setProjectMonths]   = useState(data?.financials?.project_duration_months || 3);
+    const [ltvPercent,      setLtvPercent]      = useState(70);
+    const [loanInterestRate,      setLoanInterestRate]      = useState(data?.financials?.loan_interest_rate || 12.0);
+    const [originationPoints,     setOriginationPoints]     = useState(3.0);
+    const [realtorCommissionRate, setRealtorCommissionRate] = useState(6.0);
 
-    // Header Inputs
-    const [purchasePrice, setPurchasePrice] = useState(data?.purchase_price || 180000);
-    const [repairs, setRepairs] = useState(data?.financials?.rehab_cost || 49735);
-    const [arv, setArv] = useState(data?.arv_estimate || 295000); // "Precio de venta"
-    const [closingDate, setClosingDate] = useState(data?.closing_date || "");
+    // Detailed costs
+    const [utilitiesCost,           setUtilitiesCost]           = useState(0);
+    const [acquisitionCommissionRate, setAcquisitionCommissionRate] = useState(3);
+    const [projectManagementCost,   setProjectManagementCost]   = useState(0);
+    const [titleClosingCost,        setTitleClosingCost]        = useState(data?.financials?.closing_costs_buy || 0);
+    const [insuranceCost,           setInsuranceCost]           = useState(0);
+    const [otherCosts,              setOtherCosts]              = useState(0);
+    const [lenderDocFees,           setLenderDocFees]           = useState(0);
 
-    // Details Inputs
-    const [livingArea, setLivingArea] = useState(data?.living_area || 1421);
-    const [projectMonths, setProjectMonths] = useState(data?.financials?.project_duration_months || 3);
-    const [loanInterestRate, setLoanInterestRate] = useState(data?.financials?.loan_interest_rate || 12.0);
-    const [originationPoints, setOriginationPoints] = useState(3.00); // New field for JSON
-    const [realtorCommissionRate, setRealtorCommissionRate] = useState(6.0); // New field for JSON
+    // ─── Calculations ──────────────────────────────────────────────────────────
 
-    // Detailed Costs Inputs
-    const [utilitiesCost, setUtilitiesCost] = useState(1050);
-    const [acquisitionCommissionRate, setAcquisitionCommissionRate] = useState(3); // 3%
-    const [projectManagementCost, setProjectManagementCost] = useState(2000);
-    const [titleClosingCost, setTitleClosingCost] = useState(data?.financials?.closing_costs_buy || 2655);
-    const [insuranceCost, setInsuranceCost] = useState(1800);
+    const costPerSqFt    = livingArea > 0 ? repairs / livingArea : 0;
+    const loanAmount     = arv * (ltvPercent / 100);
 
-    // Financial Costs Inputs
-    const [otherCosts, setOtherCosts] = useState(0);
-    const [lenderDocFees, setLenderDocFees] = useState(1495);
+    const acquisitionCommission  = purchasePrice * (acquisitionCommissionRate / 100);
+    const subtotalDirectCosts    = purchasePrice + utilitiesCost + repairs + acquisitionCommission + projectManagementCost + titleClosingCost + insuranceCost;
+    const grossProfit            = arv - subtotalDirectCosts;
 
-    // --- Calculations ---
-    const costPerSqFt = livingArea > 0 ? repairs / livingArea : 0;
-
-    // Loan Calcs
-    const loanAmount = arv * 0.70;
-
-    // Costos Directos
-    const acquisitionCommission = purchasePrice * (acquisitionCommissionRate / 100);
-    const subtotalDirectCosts = purchasePrice + utilitiesCost + repairs + acquisitionCommission + projectManagementCost + titleClosingCost + insuranceCost;
-
-    // Gross Profit (Ganancia Bruta)
-    const grossProfit = arv - subtotalDirectCosts;
-
-    // Financial Costs
-    const monthlyInterest = loanAmount * (loanInterestRate / 100 / 12);
-    const totalInterest = monthlyInterest * projectMonths;
-    const loanOriginationAmount = loanAmount * (originationPoints / 100);
-
+    const monthlyInterest        = loanAmount * (loanInterestRate / 100 / 12);
+    const totalInterest          = monthlyInterest * projectMonths;
+    const loanOriginationAmount  = loanAmount * (originationPoints / 100);
     const subtotalFinancialCosts = totalInterest + otherCosts + loanOriginationAmount + lenderDocFees;
 
-    // Final Results
-    const netProfit = grossProfit - subtotalFinancialCosts; // "Utilidad Neta"
-
-    // "Inversion Propia" (Cash to Close / Cash Required)
     const realtorCommissionAmount = arv * (realtorCommissionRate / 100);
-    const loanFundsForPurchase = loanAmount - repairs;
-    const closingCostsAtPurchase = acquisitionCommission + titleClosingCost + insuranceCost + loanOriginationAmount + lenderDocFees;
-    const downPaymentRequired = purchasePrice - loanFundsForPurchase;
-    const totalCashRequired = downPaymentRequired + closingCostsAtPurchase;
+    const loanFundsForPurchase    = loanAmount - repairs;
+    const closingCostsAtPurchase  = acquisitionCommission + titleClosingCost + insuranceCost + loanOriginationAmount + lenderDocFees;
+    const downPaymentRequired     = purchasePrice - loanFundsForPurchase;
+    const totalCashRequired       = downPaymentRequired + closingCostsAtPurchase;
 
-    // ROI
-    // Net Profit = Gross Profit - Financial Costs - Realtor Commission (on sale).
     const finalNetProfit = grossProfit - subtotalFinancialCosts - realtorCommissionAmount;
+    const roi            = totalCashRequired > 0 ? (finalNetProfit / totalCashRequired) * 100 : 0;
 
-    // ROI %
-    const roi = totalCashRequired > 0 ? (finalNetProfit / totalCashRequired) * 100 : 0;
+    const verdict = getDealVerdict(roi, finalNetProfit, totalCashRequired);
 
-    // Sync to parent
+    // ─── Sync to parent ────────────────────────────────────────────────────────
+
     useEffect(() => {
         onChange({
             purchase_price: purchasePrice,
             financials: {
-                rehab_cost: repairs,
-                closing_costs_buy: titleClosingCost,
-                project_duration_months: projectMonths,
-                loan_interest_rate: loanInterestRate,
-                loan_down_payment_pct: 0, // Calculated differently in Flip strategy
-                closing_costs_refi: realtorCommissionAmount, // Mapping "Selling Costs" here for now
-                insurance_annual: insuranceCost, // Using annual bucket for one-time
+                rehab_cost:               repairs,
+                closing_costs_buy:        titleClosingCost,
+                project_duration_months:  projectMonths,
+                loan_interest_rate:       loanInterestRate,
+                loan_down_payment_pct:    0,
+                closing_costs_refi:       realtorCommissionAmount,
+                insurance_annual:         insuranceCost,
             },
             arv_estimate: arv,
-            address: address,
-            // Custom JSON bucket for fields that don't fit perfectly
+            address,
             ai_analysis_json: {
                 strategy: "flip_fix",
-                living_area: livingArea,
-                utilities_cost: utilitiesCost,
+                living_area:                livingArea,
+                utilities_cost:             utilitiesCost,
                 acquisition_commission_rate: acquisitionCommissionRate,
-                project_management_cost: projectManagementCost,
-                origination_points: originationPoints,
-                lender_doc_fees: lenderDocFees,
-                other_financial_costs: otherCosts,
-                realtor_commission_rate: realtorCommissionRate,
-                closing_date: closingDate,
+                project_management_cost:    projectManagementCost,
+                origination_points:         originationPoints,
+                lender_doc_fees:            lenderDocFees,
+                other_financial_costs:      otherCosts,
+                realtor_commission_rate:    realtorCommissionRate,
+                closing_date:               closingDate,
+                ltv_percent:                ltvPercent,
                 flip_results: {
-                    total_cash_required: totalCashRequired,
-                    net_profit: finalNetProfit,
-                    roi: roi,
-                    direct_costs_subtotal: subtotalDirectCosts,
-                    financial_costs_subtotal: subtotalFinancialCosts
-                }
-            }
+                    total_cash_required:      totalCashRequired,
+                    net_profit:               finalNetProfit,
+                    roi,
+                    direct_costs_subtotal:    subtotalDirectCosts,
+                    financial_costs_subtotal: subtotalFinancialCosts,
+                },
+            },
         });
     }, [
-        purchasePrice, repairs, arv, closingDate, livingArea, projectMonths, loanInterestRate,
-        originationPoints, realtorCommissionRate, utilitiesCost, acquisitionCommissionRate,
-        projectManagementCost, titleClosingCost, insuranceCost, otherCosts, lenderDocFees,
-        address, // Added address to dependency
-        data?.id
+        purchasePrice, repairs, arv, closingDate, livingArea, projectMonths, ltvPercent,
+        loanInterestRate, originationPoints, realtorCommissionRate, utilitiesCost,
+        acquisitionCommissionRate, projectManagementCost, titleClosingCost, insuranceCost,
+        otherCosts, lenderDocFees, address, data?.id,
     ]);
+
+    // ─── Render ────────────────────────────────────────────────────────────────
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
-            {/* --- TOP SECTION: ADDRESS & SUMMARY --- */}
-            <Card className="bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800">
-                <CardContent className="p-4 grid gap-4">
-                    <div className="bg-blue-200/50 dark:bg-blue-900/50 p-2 rounded-md font-bold text-center text-blue-900 dark:text-blue-100 uppercase tracking-widest text-sm">
-                        Análisis de Flip & Fix
+
+            {/* Rehab modal */}
+            <RehabEstimatorModal
+                isOpen={rehabModalOpen}
+                onClose={() => setRehabModalOpen(false)}
+                onApply={(amount) => setRepairs(amount)}
+                purchasePrice={purchasePrice}
+            />
+
+            {/* Address */}
+            <Card className="bg-card border-border">
+                <CardContent className="p-4 space-y-3">
+                    <div className="bg-secondary p-2 rounded-md font-bold text-center text-secondary-foreground uppercase tracking-widest text-sm -mx-4 -mt-4 rounded-b-none border-b border-border">
+                        Flip &amp; Fix Analysis
                     </div>
-                    <div className="grid gap-2">
-                        <Label className="font-bold text-xs uppercase text-blue-900 dark:text-blue-200">Dirección</Label>
+                    <div className="space-y-1.5 pt-1">
+                        <Label className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">Property Address</Label>
                         <AddressAutocomplete
                             value={address}
                             onChange={setAddress}
@@ -150,198 +168,259 @@ export function FlipFixAnalyzer({ data, onChange }: FlipFixAnalyzerProps) {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-                {/* --- LEFT COLUMN: INPUTS --- */}
+                {/* ── LEFT: INPUTS ─────────────────────────────────────────── */}
                 <div className="space-y-6">
-                    {/* KEY METRICS */}
+
+                    {/* Key numbers */}
                     <Card>
                         <CardContent className="p-0 overflow-hidden">
-                            <TableLikeRow label="Precio de compra" value={purchasePrice} onChange={setPurchasePrice} currency />
-                            <TableLikeRow label="Reparaciones" value={repairs} onChange={setRepairs} currency />
-                            <TableLikeRow label="Precio de venta - ARV" value={arv} onChange={setArv} currency bg="bg-blue-50 dark:bg-blue-900/20" />
-                            <TableLikeRow label="Fecha de cierre" value={closingDate} isDate onChange={(v: any) => setClosingDate(String(v))} />
-                        </CardContent>
-                    </Card>
-
-                    {/* DETAILS */}
-                    <Card>
-                        <CardContent className="p-0 overflow-hidden text-sm">
-                            <TableLikeRow label="Area (Living area) SFT" value={livingArea} onChange={setLivingArea} />
-                            <div className="flex justify-between p-2 px-3 border-b bg-muted/20">
-                                <span>Costo remodelación / reparacion x Sft</span>
-                                <span className="font-bold">${costPerSqFt.toFixed(0)}</span>
-                            </div>
-                            <TableLikeRow label="Tiempo estimado (meses)" value={projectMonths} onChange={setProjectMonths} />
-                            <div className="flex justify-between p-2 px-3 border-b bg-muted/20">
-                                <span>Préstamo estimado (70% ARV)</span>
-                                <span className="font-bold">${loanAmount.toLocaleString()}</span>
-                            </div>
-                            <TableLikeRow label="Interés anual %" value={loanInterestRate} onChange={setLoanInterestRate} isPercent />
-                            <TableLikeRow label="Originación - Lender points %" value={originationPoints} onChange={setOriginationPoints} isPercent />
-                            <TableLikeRow label="Comision Realtor (venta ARV) %" value={realtorCommissionRate} onChange={setRealtorCommissionRate} isPercent />
-
-                            <div className="flex justify-between p-2 px-3 bg-slate-100 dark:bg-slate-800 font-bold border-t-2 border-slate-300 dark:border-slate-700">
-                                <span className="text-xs uppercase max-w-[200px] text-slate-700 dark:text-slate-300">Inversion propia<br />(Down pmt + cierre + diff reparaciones)</span>
-                                <span className="text-lg text-slate-900 dark:text-white">${totalCashRequired.toLocaleString()}</span>
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    {/* BREAKDOWN - DIRECT COSTS */}
-                    <Card>
-                        <CardContent className="p-0 overflow-hidden text-sm">
-                            <div className="bg-slate-200 dark:bg-slate-800 p-2 font-bold text-center text-xs uppercase border-b border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200">Análisis Desglosado</div>
-                            <div className="bg-slate-100 dark:bg-slate-900 p-2 flex justify-between font-bold border-b border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300">
-                                <span>Concepto</span>
-                                <span>USD</span>
-                            </div>
-                            <div className="p-2 flex justify-between font-bold bg-blue-50 dark:bg-blue-950/30 border-b dark:border-slate-800 text-slate-800 dark:text-slate-200">
-                                <span>Precio de venta</span>
-                                <span>{arv.toLocaleString()}</span>
-                            </div>
-
-                            <div className="bg-slate-300 dark:bg-slate-700 p-1 px-3 font-bold text-xs uppercase mt-2 text-slate-800 dark:text-slate-100">Costos Directos (CD)</div>
-
-                            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                                <DisplayRow label="Precio de compra" value={purchasePrice} colorClass="text-red-600 dark:text-red-400" />
-                                <TableLikeRow label="Servicios publicos (agua, luz)" value={utilitiesCost} onChange={setUtilitiesCost} colorClass="text-red-600 dark:text-red-400" />
-                                <DisplayRow label="Costos remodelación / reparación" value={repairs} colorClass="text-red-600 dark:text-red-400" />
-                                <div className="grid grid-cols-[1fr_80px] hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                                    <div className="p-2 px-3 flex items-center gap-2">
-                                        <span className="text-slate-700 dark:text-white font-medium">Comisión por adquisición</span>
-                                        <Input
-                                            className="w-12 h-6 text-xs p-1 bg-background border-input text-foreground focus:ring-1 focus:ring-ring"
-                                            value={acquisitionCommissionRate}
-                                            onChange={e => setAcquisitionCommissionRate(Number(e.target.value))}
-                                        />
-                                        <span className="text-muted-foreground">%</span>
-                                    </div>
-                                    <div className="p-2 px-3 text-right font-bold text-red-600 dark:text-red-400">
-                                        {acquisitionCommission.toLocaleString()}
-                                    </div>
+                            <TableLikeRow label="Purchase Price"  value={purchasePrice} onChange={setPurchasePrice} currency />
+                            <div className={cn("grid grid-cols-[1fr_120px] items-center border-b border-border hover:bg-muted transition-colors")}>
+                                <div className="px-3 py-2 flex items-center gap-2 font-medium text-foreground">
+                                    Repairs
+                                    <button
+                                        type="button"
+                                        onClick={() => setRehabModalOpen(true)}
+                                        className="flex items-center gap-1 text-[10px] font-bold text-violet-400 hover:text-violet-300 transition-colors ml-1"
+                                    >
+                                        <Hammer className="h-3 w-3" /> AI Est.
+                                    </button>
                                 </div>
-                                <TableLikeRow label="Administración de proyecto" value={projectManagementCost} onChange={setProjectManagementCost} colorClass="text-red-600 dark:text-red-400" />
-                                <TableLikeRow label="Title closing cost" value={titleClosingCost} onChange={setTitleClosingCost} colorClass="text-red-600 dark:text-red-400" />
-                                <TableLikeRow label="Seguro" value={insuranceCost} onChange={setInsuranceCost} colorClass="text-red-600 dark:text-red-400" />
+                                <div className="px-2 py-1">
+                                    <FormattedCurrencyInput
+                                        value={repairs}
+                                        onChange={setRepairs}
+                                        className="h-7 text-right px-1 bg-background border-input text-foreground font-bold rounded-sm"
+                                    />
+                                </div>
+                            </div>
+                            <TableLikeRow label="Sale Price – ARV" value={arv} onChange={setArv} currency bg="bg-muted/40" />
+                            <TableLikeRow label="Closing Date"     value={closingDate} isDate onChange={(v: any) => setClosingDate(String(v))} />
+                        </CardContent>
+                    </Card>
+
+                    {/* Details */}
+                    <Card>
+                        <CardContent className="p-0 overflow-hidden text-sm">
+                            <TableLikeRow label="Living Area (SqFt)"       value={livingArea}    onChange={setLivingArea} />
+                            <DisplayRow   label="Repair Cost / SqFt"       value={costPerSqFt}   noPrefix />
+                            <TableLikeRow label="Project Duration (months)" value={projectMonths} onChange={setProjectMonths} />
+
+                            {/* LTV — editable */}
+                            <div className="grid grid-cols-[1fr_120px] items-center border-b border-border hover:bg-muted transition-colors">
+                                <div className="px-3 py-2 text-foreground font-medium">Loan LTV %</div>
+                                <div className="px-2 py-1 flex items-center gap-1">
+                                    <Input
+                                        type="number" min={0} max={100} step={1}
+                                        value={ltvPercent}
+                                        onChange={e => setLtvPercent(Number(e.target.value))}
+                                        className="h-7 text-right px-1 pr-5 bg-background border-input text-foreground font-bold rounded-sm"
+                                    />
+                                    <Percent className="h-3 w-3 text-muted-foreground -ml-5 pointer-events-none" />
+                                </div>
                             </div>
 
-                            <div className="flex justify-between p-2 px-3 bg-slate-100 dark:bg-slate-800 font-bold border-t border-slate-300 dark:border-slate-700">
-                                <span className="text-slate-800 dark:text-slate-200">Subtotal</span>
-                                <span className="text-blue-700 dark:text-blue-400">{subtotalDirectCosts.toLocaleString()}</span>
-                            </div>
+                            <DisplayRow label={`Estimated Loan (${ltvPercent}% ARV)`} value={loanAmount} />
+                            <TableLikeRow label="Annual Interest %"               value={loanInterestRate}      onChange={setLoanInterestRate}      isPercent />
+                            <TableLikeRow label="Origination Points %"            value={originationPoints}     onChange={setOriginationPoints}     isPercent />
+                            <TableLikeRow label="Realtor Commission (Sale) %"     value={realtorCommissionRate} onChange={setRealtorCommissionRate} isPercent />
 
-                            <div className="flex justify-between p-2 px-3 bg-green-100 dark:bg-green-900/40 font-bold border-t border-green-200 dark:border-green-800">
-                                <span className="text-green-900 dark:text-green-100">Ganancia Bruta - Gross Profit</span>
-                                <span className="text-green-800 dark:text-green-300">{grossProfit.toLocaleString()}</span>
+                            <div className="flex justify-between p-2 px-3 bg-muted/30 font-bold border-t-2 border-border">
+                                <span className="text-xs uppercase text-muted-foreground">Personal Investment<br/><span className="font-normal text-[10px]">(Down Pmt + Closing + Repair diff)</span></span>
+                                <span className="text-lg text-foreground">${totalCashRequired.toLocaleString()}</span>
                             </div>
                         </CardContent>
                     </Card>
 
-                    {/* BREAKDOWN - FINANCIAL COSTS */}
+                    {/* Direct Costs breakdown */}
                     <Card>
                         <CardContent className="p-0 overflow-hidden text-sm">
-                            <div className="bg-slate-300 dark:bg-slate-700 p-1 px-3 font-bold text-xs uppercase text-slate-800 dark:text-slate-100">Costos Financieros (CF)</div>
-                            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                                <DisplayRow label="Intereses de préstamo" value={totalInterest} colorClass="text-red-600 dark:text-red-400" />
-                                <TableLikeRow label="Otros costos" value={otherCosts} onChange={setOtherCosts} colorClass="text-red-600 dark:text-red-400" />
-                                <DisplayRow label="Lender loan origination points" value={loanOriginationAmount} colorClass="text-red-600 dark:text-red-400" />
-                                <TableLikeRow label="Lender Doc Fees" value={lenderDocFees} onChange={setLenderDocFees} colorClass="text-red-600 dark:text-red-400" />
+                            <SectionHeader>Detailed Breakdown</SectionHeader>
+                            <div className="bg-muted p-2 px-3 flex justify-between font-bold border-b border-border text-foreground text-xs uppercase tracking-wider">
+                                <span>Item</span><span>USD</span>
                             </div>
-                            <div className="flex justify-between p-2 px-3 bg-slate-100 dark:bg-slate-800 font-bold border-t border-slate-300 dark:border-slate-700">
-                                <span className="text-slate-800 dark:text-slate-200">Subtotal CF</span>
-                                <span className="text-blue-700 dark:text-blue-400">{subtotalFinancialCosts.toLocaleString()}</span>
+                            <div className="p-2 px-3 flex justify-between font-bold bg-background border-b border-border text-foreground">
+                                <span>Sale Price (ARV)</span>
+                                <span>${arv.toLocaleString()}</span>
+                            </div>
+
+                            <div className="bg-secondary px-3 py-1 font-bold text-xs uppercase text-secondary-foreground border-b border-border">Direct Costs (DC)</div>
+
+                            <div className="divide-y divide-border">
+                                <DisplayRow label="Purchase Price"       value={purchasePrice} />
+                                <TableLikeRow label="Utilities (Water, Power)" value={utilitiesCost} onChange={setUtilitiesCost} />
+                                <DisplayRow   label="Remodel / Repair Costs"   value={repairs} />
+                                {/* Acquisition commission inline % */}
+                                <div className="grid grid-cols-[1fr_120px] items-center border-b border-border hover:bg-muted transition-colors">
+                                    <div className="px-3 py-2 flex items-center gap-1.5 text-foreground font-medium">
+                                        Acquisition Commission
+                                        <Input className="w-12 h-6 text-xs p-1 bg-background border-input text-foreground" type="number"
+                                            value={acquisitionCommissionRate}
+                                            onChange={e => setAcquisitionCommissionRate(Number(e.target.value))} />
+                                        <span className="text-muted-foreground text-xs">%</span>
+                                    </div>
+                                    <div className="px-3 py-2 text-right font-bold text-foreground">${acquisitionCommission.toLocaleString()}</div>
+                                </div>
+                                <TableLikeRow label="Project Management" value={projectManagementCost} onChange={setProjectManagementCost} />
+                                <TableLikeRow label="Title Closing Cost" value={titleClosingCost}       onChange={setTitleClosingCost} />
+                                <TableLikeRow label="Insurance"          value={insuranceCost}          onChange={setInsuranceCost} />
+                            </div>
+
+                            <div className="flex justify-between p-2 px-3 bg-secondary font-bold border-t border-border">
+                                <span className="text-secondary-foreground">Subtotal Direct Costs</span>
+                                <span className="text-foreground">${subtotalDirectCosts.toLocaleString()}</span>
+                            </div>
+                            <div className={cn("flex justify-between p-2 px-3 font-bold border-t",
+                                grossProfit >= 0
+                                    ? "bg-primary/10 border-primary/20 text-primary"
+                                    : "bg-red-500/10 border-red-500/20 text-red-400"
+                            )}>
+                                <span>Gross Profit</span>
+                                <span>{grossProfit >= 0 ? "+" : ""}${grossProfit.toLocaleString()}</span>
                             </div>
                         </CardContent>
                     </Card>
 
-                    {/* REALTOR COMMISSION & NET */}
+                    {/* Financial Costs */}
                     <Card>
                         <CardContent className="p-0 overflow-hidden text-sm">
-                            <div className="p-2 flex justify-between items-center text-red-600 dark:text-red-400 font-medium">
-                                <span>Comision Realtor ({realtorCommissionRate}%)</span>
-                                <span>{realtorCommissionAmount.toLocaleString()}</span>
+                            <div className="bg-slate-300 dark:bg-slate-700 px-3 py-1 font-bold text-xs uppercase text-slate-800 dark:text-slate-100 border-b border-border">Financial Costs (FC)</div>
+                            <div className="divide-y divide-border">
+                                <DisplayRow label="Loan Interest"                  value={totalInterest} />
+                                <TableLikeRow label="Other Costs"                  value={otherCosts} onChange={setOtherCosts} />
+                                <DisplayRow label="Lender Origination Points"       value={loanOriginationAmount} />
+                                <TableLikeRow label="Lender Doc Fees"              value={lenderDocFees} onChange={setLenderDocFees} />
                             </div>
-                            <div className="flex justify-between p-3 px-3 bg-green-200 dark:bg-green-900/60 font-bold text-lg border-t border-green-300 dark:border-green-800">
-                                <span className="text-green-900 dark:text-green-100">Utilidad Neta</span>
-                                <span className="text-green-900 dark:text-green-300">${finalNetProfit.toLocaleString()}</span>
+                            <div className="flex justify-between p-2 px-3 bg-slate-100 dark:bg-slate-800 font-bold border-t border-slate-300 dark:border-slate-700">
+                                <span className="text-slate-800 dark:text-slate-200">FC Subtotal</span>
+                                <span className="text-blue-600 dark:text-blue-400">${subtotalFinancialCosts.toLocaleString()}</span>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* Realtor + Net Profit */}
+                    <Card>
+                        <CardContent className="p-0 overflow-hidden text-sm">
+                            <div className="p-2 px-3 flex justify-between items-center text-foreground font-medium border-b border-border">
+                                <span>Realtor Commission ({realtorCommissionRate}%)</span>
+                                <span>${realtorCommissionAmount.toLocaleString()}</span>
+                            </div>
+                            <div className={cn("flex justify-between p-3 px-3 font-bold text-lg border-t",
+                                finalNetProfit >= 0
+                                    ? "bg-emerald-100 dark:bg-emerald-900/40 border-emerald-300 dark:border-emerald-800"
+                                    : "bg-red-100    dark:bg-red-900/40     border-red-300    dark:border-red-800"
+                            )}>
+                                <span className={finalNetProfit >= 0 ? "text-emerald-900 dark:text-emerald-100" : "text-red-900 dark:text-red-100"}>
+                                    Net Profit
+                                </span>
+                                <span className={finalNetProfit >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}>
+                                    {finalNetProfit >= 0 ? "+" : ""}${finalNetProfit.toLocaleString()}
+                                </span>
                             </div>
                         </CardContent>
                     </Card>
                 </div>
 
-                {/* --- RIGHT COLUMN: VISUALS --- */}
+                {/* ── RIGHT: VISUALS ────────────────────────────────────────── */}
                 <div className="space-y-6">
-                    {/* INVESTMENT ANALYSIS BOX */}
-                    <Card className="bg-blue-100/50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
+
+                    {/* Deal Verdict */}
+                    {verdict && (
+                        <div className={cn("flex items-center justify-between rounded-lg border px-5 py-3", VERDICT_STYLES[verdict.color])}>
+                            <div>
+                                <p className="text-[10px] font-extrabold uppercase tracking-widest opacity-60">Deal Verdict</p>
+                                <p className="font-black text-xl tracking-tight">{verdict.icon} {verdict.label}</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-[10px] font-extrabold uppercase tracking-widest opacity-60">ROI</p>
+                                <p className="font-black text-2xl">{roi.toFixed(1)}%</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Quick KPIs */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <KpiCard
+                            label="Net Profit"
+                            value={`${finalNetProfit >= 0 ? "+" : ""}$${Math.abs(finalNetProfit).toLocaleString()}`}
+                            icon={finalNetProfit >= 0 ? TrendingUp : TrendingDown}
+                            positive={finalNetProfit >= 0}
+                        />
+                        <KpiCard
+                            label="Cash to Close"
+                            value={`$${totalCashRequired.toLocaleString()}`}
+                            icon={DollarSign}
+                        />
+                        <KpiCard
+                            label="Project Duration"
+                            value={`${projectMonths} mo`}
+                            icon={Clock}
+                        />
+                        <KpiCard
+                            label="Loan Amount"
+                            value={`$${loanAmount.toLocaleString()}`}
+                            icon={Percent}
+                            sublabel={`${ltvPercent}% LTV`}
+                        />
+                    </div>
+
+                    {/* Investment Analysis */}
+                    <Card className="bg-card border-border">
                         <CardContent className="p-0 text-sm">
-                            <div className="bg-blue-200 dark:bg-blue-800 p-2 font-bold text-center text-blue-900 dark:text-blue-100 uppercase tracking-widest text-xs">
-                                Análisis de inversión requerida
+                            <div className="bg-secondary p-2 px-4 font-bold text-center text-secondary-foreground uppercase tracking-widest text-xs border-b border-border">
+                                Required Investment Analysis
                             </div>
                             <div className="p-4 space-y-2">
-                                <div className="flex justify-between border-b border-blue-200 dark:border-blue-800 pb-1 text-slate-800 dark:text-slate-200">
-                                    <span>ARV</span>
-                                    <span className="font-bold">{arv.toLocaleString()}</span>
+                                {[
+                                    ["ARV",                       `$${arv.toLocaleString()}`],
+                                    ["Purchase Price",            `$${purchasePrice.toLocaleString()}`],
+                                    [`LTV ${ltvPercent}% (Loan)`, `$${loanAmount.toLocaleString()}`],
+                                ].map(([k, v]) => (
+                                    <div key={k} className="flex justify-between border-b border-border pb-1 text-foreground">
+                                        <span>{k}</span><span className="font-bold">{v}</span>
+                                    </div>
+                                ))}
+                                <div className="py-1" />
+                                {[
+                                    ["Total loan amount",           `$${loanAmount.toLocaleString()}`],
+                                    ["Minus repairs",               `$${repairs.toLocaleString()}`],
+                                ].map(([k, v]) => (
+                                    <div key={k} className="flex justify-between text-muted-foreground text-xs">
+                                        <span>{k}</span><span>{v}</span>
+                                    </div>
+                                ))}
+                                <div className="flex justify-between font-medium border-t border-dashed border-border pt-1 text-foreground">
+                                    <span>Loan for Purchase</span>
+                                    <span>${loanFundsForPurchase.toLocaleString()}</span>
                                 </div>
-                                <div className="flex justify-between border-b border-blue-200 dark:border-blue-800 pb-1 text-slate-800 dark:text-slate-200">
-                                    <span>Purchase price</span>
-                                    <span className="font-bold">{purchasePrice.toLocaleString()}</span>
+                                <div className="flex justify-between font-medium text-foreground">
+                                    <span>Closing Costs at Purchase</span>
+                                    <span>${closingCostsAtPurchase.toLocaleString()}</span>
                                 </div>
-                                <div className="flex justify-between border-b border-blue-200 dark:border-blue-800 pb-1 text-slate-800 dark:text-slate-200">
-                                    <span>LTV 70% (Loan)</span>
-                                    <span className="font-bold">{loanAmount.toLocaleString()}</span>
+                                <div className="flex justify-between font-medium text-foreground">
+                                    <span>Down Payment</span>
+                                    <span>${downPaymentRequired.toLocaleString()}</span>
                                 </div>
-                                <div className="py-2"></div>
-                                <div className="flex justify-between text-muted-foreground text-xs">
-                                    <span>Total loan amount</span>
-                                    <span>{loanAmount.toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between text-muted-foreground text-xs">
-                                    <span>Minus repairs</span>
-                                    <span>{repairs.toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between font-medium border-t border-dashed border-slate-300 dark:border-slate-700 pt-1 text-slate-800 dark:text-slate-200">
-                                    <span>Sub total 1 (Loan for Purchase)</span>
-                                    <span>{loanFundsForPurchase.toLocaleString()}</span>
-                                </div>
-                                <div className="py-2"></div>
-                                <div className="flex justify-between font-medium text-slate-800 dark:text-slate-200">
-                                    <span>Gastos de cierre al adquirir</span>
-                                    <span>{closingCostsAtPurchase.toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between font-medium text-slate-800 dark:text-slate-200">
-                                    <span>Deposito inicial (Down Payment)</span>
-                                    <span>{downPaymentRequired.toLocaleString()}</span>
-                                </div>
-
-                                <div className="flex justify-between p-2 bg-red-200/50 dark:bg-red-900/30 font-bold border rounded mt-2 border-red-300 dark:border-red-800">
-                                    <span className="text-red-900 dark:text-red-200">Total estimado de fondos para cerrar</span>
-                                    <span className="text-red-900 dark:text-red-200">${totalCashRequired.toLocaleString()}</span>
+                                <div className="flex justify-between p-2 bg-muted/20 font-bold border rounded mt-2 border-border">
+                                    <span className="text-foreground">Estimated Funds to Close</span>
+                                    <span className="text-foreground">${totalCashRequired.toLocaleString()}</span>
                                 </div>
                             </div>
                         </CardContent>
                     </Card>
 
-                    {/* BIG ROI BLOCK */}
-                    <div className="grid grid-cols-2 gap-1 h-24">
-                        <div className="bg-blue-300/80 dark:bg-blue-700/50 flex items-center justify-center text-3xl font-black text-blue-900 dark:text-blue-100 border-2 border-black dark:border-slate-600">
-                            ROI
-                        </div>
-                        <div className="bg-green-300/80 dark:bg-green-700/50 flex items-center justify-center text-3xl font-black text-green-900 dark:text-green-100 border-2 border-black dark:border-slate-600 border-l-0">
-                            {roi.toFixed(0)}%
-                        </div>
-                    </div>
-
-                    {/* CHARTS */}
+                    {/* Charts */}
                     <FlipFixCharts
                         totalInvestment={totalCashRequired}
                         netProfit={finalNetProfit}
                         directCosts={{
-                            purchase: purchasePrice,
-                            utilities: utilitiesCost,
-                            rehab: repairs,
+                            purchase:   purchasePrice,
+                            utilities:  utilitiesCost,
+                            rehab:      repairs,
                             commission: acquisitionCommission,
                             management: projectManagementCost,
-                            closing: titleClosingCost,
-                            insurance: insuranceCost
+                            closing:    titleClosingCost,
+                            insurance:  insuranceCost,
                         }}
                     />
                 </div>
@@ -350,35 +429,58 @@ export function FlipFixAnalyzer({ data, onChange }: FlipFixAnalyzerProps) {
     );
 }
 
-// --- Helper Components ---
+// ─── Helper Components ────────────────────────────────────────────────────────
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+    return (
+        <div className="bg-secondary p-2 font-bold text-center text-xs uppercase border-b border-border text-secondary-foreground tracking-widest">
+            {children}
+        </div>
+    );
+}
+
+function KpiCard({ label, value, icon: Icon, sublabel, positive }: { label: string; value: string; icon: any; sublabel?: string; positive?: boolean }) {
+    return (
+        <div className="rounded-lg border border-border bg-card p-3 space-y-1">
+            <div className="flex items-center justify-between">
+                <p className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">{label}</p>
+                <Icon className={cn("h-3.5 w-3.5", positive === true ? "text-emerald-400" : positive === false ? "text-red-400" : "text-muted-foreground")} />
+            </div>
+            <p className={cn("font-bold text-base tabular-nums",
+                positive === true ? "text-emerald-400" : positive === false ? "text-red-400" : "text-foreground"
+            )}>{value}</p>
+            {sublabel && <p className="text-[10px] text-muted-foreground">{sublabel}</p>}
+        </div>
+    );
+}
 
 function TableLikeRow({ label, value, onChange, currency, isPercent, isDate, bg, colorClass }: any) {
     return (
-        <div className={cn("grid grid-cols-[1fr_120px] items-center border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors", bg)}>
-            <div className="px-3 py-2 text-slate-700 dark:text-white font-medium truncate" title={label}>{label}</div>
-            <div className="px-2 py-1">
+        <div className={cn("grid grid-cols-[1fr_120px] items-center border-b border-border hover:bg-muted transition-colors", bg)}>
+            <div className="px-3 py-2 text-foreground font-medium truncate" title={label}>{label}</div>
+            <div className="px-2 py-1 flex items-center">
                 {isDate ? (
-                    <Input
-                        type="date"
-                        value={value}
-                        onChange={e => onChange(e.target.value)}
-                        className="h-7 text-right px-1 bg-background border-input text-foreground hover:border-accent focus:border-ring rounded-sm"
-                    />
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button variant="outline" className={cn("w-full h-8 justify-start text-left font-normal px-2 truncate bg-background border-input text-foreground hover:bg-muted", !value && "text-muted-foreground")}>
+                                <CalendarIcon className="mr-2 h-3 w-3 shrink-0" />
+                                <span className="text-xs">{value ? format(new Date(value), "MM/dd/yyyy") : "Select Date"}</span>
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="end">
+                            <Calendar mode="single" selected={value ? new Date(value) : undefined}
+                                onSelect={(date) => onChange(date ? date.toISOString().split("T")[0] : "")} initialFocus />
+                        </PopoverContent>
+                    </Popover>
                 ) : currency ? (
-                    <FormattedCurrencyInput
-                        value={value}
-                        onChange={onChange}
-                        className={cn("h-7 text-right px-1 bg-background border-input text-foreground hover:border-accent focus:border-ring rounded-sm font-bold", colorClass)}
-                    />
+                    <FormattedCurrencyInput value={value} onChange={onChange}
+                        className={cn("h-7 text-right px-1 bg-background border-input text-foreground hover:border-accent focus:border-ring rounded-sm font-bold", colorClass)} />
                 ) : (
-                    <div className="relative">
-                        <Input
-                            type="number"
-                            value={value}
+                    <div className="relative w-full">
+                        <Input type="number" value={value || ""}
                             onChange={e => onChange(Number(e.target.value))}
-                            className={cn("h-7 text-right px-1 bg-background border-input text-foreground hover:border-accent focus:border-ring rounded-sm font-bold", colorClass, isPercent && "pr-6")}
-                        />
-                        {isPercent && <span className="absolute right-1 top-1 text-xs text-muted-foreground">%</span>}
+                            className={cn("h-7 text-right px-1 bg-background border-input text-foreground hover:border-accent focus:border-ring rounded-sm font-bold w-full", colorClass, isPercent && "pr-6")} />
+                        {isPercent && <span className="absolute right-1.5 top-1 text-xs text-muted-foreground">%</span>}
                     </div>
                 )}
             </div>
@@ -386,11 +488,11 @@ function TableLikeRow({ label, value, onChange, currency, isPercent, isDate, bg,
     );
 }
 
-function DisplayRow({ label, value, colorClass }: any) {
+function DisplayRow({ label, value, noPrefix }: { label: string; value: number; noPrefix?: boolean }) {
     return (
-        <div className="flex justify-between p-2 px-3">
-            <span className="text-slate-700 dark:text-white font-medium">{label}</span>
-            <span className={cn("font-medium", colorClass)}>{Number(value).toLocaleString()}</span>
+        <div className="flex justify-between p-2 px-3 border-b border-border">
+            <span className="text-foreground font-medium">{label}</span>
+            <span className="font-medium text-foreground">{noPrefix ? value.toFixed(0) : `$${Number(value).toLocaleString()}`}</span>
         </div>
     );
 }

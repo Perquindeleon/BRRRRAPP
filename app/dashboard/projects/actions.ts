@@ -122,34 +122,47 @@ export async function addTenant(formData: FormData) {
 
     if (contractFile && contractFile.size > 0) {
         const filename = `${Date.now()}-${contractFile.name.replace(/[^a-zA-Z0-9.-]/g, '')}`;
-        const { data: uploadData, error: uploadError } = await supabase.storage
+        const { error: uploadError } = await supabase.storage
             .from("contracts")
             .upload(filename, contractFile);
 
         if (uploadError) {
             console.error("Upload error:", uploadError);
-        } else {
-            const { data: { publicUrl } } = supabase.storage.from("contracts").getPublicUrl(filename);
-            contractUrl = publicUrl;
+            return { error: `Contract upload failed: ${uploadError.message}. Make sure the 'contracts' storage bucket exists and is public in Supabase.` };
         }
+
+        const { data: { publicUrl } } = supabase.storage.from("contracts").getPublicUrl(filename);
+        contractUrl = publicUrl;
     }
 
-    const data = {
+    const isColiving = formData.get("is_coliving") === "true";
+
+    // Build insert object — only include optional columns that have values,
+    // so missing DB columns don't cause schema cache errors.
+    const data: Record<string, any> = {
         property_id: propertyId,
         name: name,
-        email: formData.get("email") as string,
-        phone: formData.get("phone") as string,
         rent_amount: parseFloat(formData.get("rent_amount") as string) || 0,
-        lease_start: formData.get("lease_start") as string || null,
-        lease_end: formData.get("lease_end") as string || null,
         status: 'active',
-        unit_number: formData.get("unit_number") as string || null
     };
 
-    // VALIDATION: Check for overlapping leases
-    if (data.lease_start && data.lease_end) {
-        const startDate = new Date(data.lease_start);
-        const endDate = new Date(data.lease_end);
+    const email = formData.get("email") as string;
+    const phone = formData.get("phone") as string;
+    const unitNumber = formData.get("unit_number") as string;
+    const leaseStart = formData.get("lease_start") as string;
+    const leaseEnd = formData.get("lease_end") as string;
+
+    if (email) data.email = email;
+    if (phone) data.phone = phone;
+    if (unitNumber) data.unit_number = unitNumber;
+    if (leaseStart) data.lease_start = leaseStart;
+    if (leaseEnd) data.lease_end = leaseEnd;
+    if (contractUrl) data.contract_url = contractUrl;
+
+    // VALIDATION: Check for overlapping leases (skip for co-living tenants)
+    if (!isColiving && leaseStart && leaseEnd) {
+        const startDate = new Date(leaseStart);
+        const endDate = new Date(leaseEnd);
 
         if (endDate <= startDate) {
             return { error: "End date must be after start date" };
@@ -184,6 +197,7 @@ export async function addTenant(formData: FormData) {
 
     revalidatePath(`/dashboard/projects/${propertyId}`);
     revalidatePath(`/dashboard/properties`);
+    revalidatePath(`/dashboard/tenants`);
     return { success: true };
 }
 
@@ -201,10 +215,12 @@ export async function updateTenant(formData: FormData) {
             .from("contracts")
             .upload(filename, contractFile);
 
-        if (!uploadError) {
-            const { data: { publicUrl } } = supabase.storage.from("contracts").getPublicUrl(filename);
-            contractUrl = publicUrl;
+        if (uploadError) {
+            return { error: `Contract upload failed: ${uploadError.message}` };
         }
+
+        const { data: { publicUrl } } = supabase.storage.from("contracts").getPublicUrl(filename);
+        contractUrl = publicUrl;
     }
 
     const data: any = {
