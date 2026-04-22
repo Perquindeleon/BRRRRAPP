@@ -8,6 +8,7 @@ import { Plus, Home, DollarSign, TrendingUp, Calendar, ArrowRight, Trash2 } from
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { addToPortfolio } from "../properties/actions";
+import { monthlyMortgagePayment } from "@/lib/finance";
 
 export default function SavedDealsPage() {
     const supabase = createClient();
@@ -107,9 +108,7 @@ export default function SavedDealsPage() {
                         // Debt Service (Refi)
                         const arv = deal.arv_estimate || deal.purchase_price;
                         const refiLoan = arv * ((financials.refinance_ltv || 75) / 100);
-                        const rate = financials.refinance_rate || 7.0;
-                        const r = rate / 100 / 12;
-                        const mortgage = refiLoan > 0 ? (refiLoan * r) / (1 - Math.pow(1 + r, -360)) : 0;
+                        const mortgage = monthlyMortgagePayment(refiLoan, financials.refinance_rate || 7.0);
 
                         const totalExpenses = taxesMo + insuranceMo + vacancy + capex + mgmt + hoa + utils + mortgage;
                         const cashFlow = rent - totalExpenses;

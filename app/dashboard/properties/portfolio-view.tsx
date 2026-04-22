@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SimpleDialog } from "@/components/ui/simple-dialog";
 import { useRouter } from "next/navigation";
 import { deleteProperty, updateProperty } from "./actions";
+import { estimatedMonthlyCashFlow } from "@/lib/finance";
 
 const PROPERTY_TYPES = [
     { value: "sfh",         label: "Single Family",  icon: Home,      color: "violet" },
@@ -127,27 +128,28 @@ export default function PortfolioView({ initialData }: { initialData: any[] }) {
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {filteredProperties.map((prop) => {
-                                const tenant = prop.tenants?.[0];
+                                const propActiveTenants = (prop.tenants || []).filter((t: any) => t.status === 'active' || t.status === 'late');
+                                const tenant = propActiveTenants[0];
                                 const currentRent = prop.tenants?.reduce((sum: number, t: any) => sum + (t.rent_amount || 0), 0) || 0;
-                                const marketRent = Math.round((prop.purchase_price || 0) * 0.008);
+                                // Market Rent = actual sum of all tenant rent amounts (real data)
+                                const marketRent = currentRent > 0
+                                    ? currentRent
+                                    : Math.round((prop.purchase_price || 0) * 0.008) * (prop.property_type === 'multifamily' ? (prop.units || 1) : 1);
                                 let cashFlow: number | null = null;
                                 let equity: number | null = null;
                                 const financials = Array.isArray(prop.financials) ? prop.financials[0] : prop.financials;
 
                                 if (financials) {
-                                    const income = currentRent;
-                                    const taxesMo = (financials.taxes_annual || 0) / 12;
-                                    const insMo = (financials.insurance_annual || 0) / 12;
-                                    const mgmt = income * ((financials.management_rate || 0) / 100);
-                                    let debtService = 0;
                                     const loanAmount = (prop.arv_estimate || prop.purchase_price || 0) * ((financials.refinance_ltv || 75) / 100);
-                                    const rate = financials.refinance_rate || 7.0;
-                                    if (loanAmount > 0 && rate > 0) {
-                                        const r = rate / 100 / 12;
-                                        debtService = (loanAmount * r) / (1 - Math.pow(1 + r, -360));
-                                    }
-                                    equity = (prop.arv_estimate || prop.purchase_price || 0) - loanAmount;
-                                    cashFlow = income - (taxesMo + insMo + debtService + mgmt);
+                                    equity   = (prop.arv_estimate || prop.purchase_price || 0) - loanAmount;
+                                    cashFlow = estimatedMonthlyCashFlow({
+                                        rent:            currentRent,
+                                        loanAmount,
+                                        annualRate:      financials.refinance_rate || 7.0,
+                                        taxesAnnual:     financials.taxes_annual,
+                                        insuranceAnnual: financials.insurance_annual,
+                                        managementRate:  financials.management_rate,
+                                    });
                                 }
 
                                 return (
@@ -209,15 +211,29 @@ export default function PortfolioView({ initialData }: { initialData: any[] }) {
                                             )}
                                         </td>
                                         <td className="px-6 py-4 hidden md:table-cell">
-                                            {tenant ? (
+                                            {propActiveTenants.length === 0 ? (
+                                                <span className="text-gray-400 italic text-xs">None</span>
+                                            ) : prop.property_type === 'multifamily' ? (
+                                                <div className="space-y-1">
+                                                    {propActiveTenants.map((t: any) => (
+                                                        <div key={t.id} className="flex items-center gap-1.5">
+                                                            <div className="h-5 w-5 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center text-[10px] font-bold shrink-0">
+                                                                {(t.name || '?').charAt(0)}
+                                                            </div>
+                                                            <span className="text-xs truncate max-w-[110px]">{t.name}</span>
+                                                            {t.unit_number && (
+                                                                <span className="text-[10px] text-muted-foreground shrink-0">{t.unit_number}</span>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
                                                 <div className="flex items-center gap-2">
                                                     <div className="h-6 w-6 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center text-xs font-bold">
-                                                        {tenant.name.charAt(0)}
+                                                        {(tenant.name || '?').charAt(0)}
                                                     </div>
                                                     <span>{tenant.name}</span>
                                                 </div>
-                                            ) : (
-                                                <span className="text-gray-400 italic text-xs">None</span>
                                             )}
                                         </td>
                                         <td className="px-6 py-4 text-right">

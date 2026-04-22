@@ -129,6 +129,38 @@ export async function updateRequestStatus(requestId: string, status: string) {
     return { success: true };
 }
 
+export async function updateMaintenanceRequest(requestId: string, params: {
+    title: string;
+    description?: string;
+    category: string;
+    priority: string;
+    estimatedCost?: number;
+}) {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: "Unauthorized" };
+
+    const record: any = {
+        title:       params.title,
+        description: params.description || null,
+        category:    params.category,
+        priority:    params.priority,
+    };
+    if (params.estimatedCost !== undefined && !isNaN(params.estimatedCost)) {
+        record.estimated_cost = params.estimatedCost;
+    }
+
+    const { error } = await supabase
+        .from("maintenance_requests")
+        .update(record)
+        .eq("id", requestId)
+        .eq("user_id", user.id);
+
+    if (error) return { error: error.message };
+    revalidatePath("/dashboard/maintenance");
+    return { success: true };
+}
+
 export async function deleteMaintenanceRequest(requestId: string) {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();

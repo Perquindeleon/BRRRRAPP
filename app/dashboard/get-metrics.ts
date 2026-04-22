@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { estimatedMonthlyCashFlow, remainingLoanBalance } from "@/lib/finance";
 
 export async function getDashboardMetrics() {
     const supabase = createClient();
@@ -21,6 +22,34 @@ export async function getDashboardMetrics() {
         console.error("Error fetching metrics:", error);
         return null;
     }
+
+    // ── Real income & expenses (3-month trailing average, per property) ──────
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    const threeMonthsAgoStr = threeMonthsAgo.toISOString().split('T')[0];
+
+    const [{ data: realPaymentsRaw }, { data: realExpensesRaw }] = await Promise.all([
+        supabase.from("payments").select("property_id, amount")
+            .eq("user_id", user.id).eq("status", "paid").gte("payment_date", threeMonthsAgoStr),
+        supabase.from("expenses").select("property_id, amount")
+            .eq("user_id", user.id).gte("expense_date", threeMonthsAgoStr),
+    ]);
+
+    // Sum over 3 months then divide → monthly average per property
+    const realIncomeByProp:   Record<string, number> = {};
+    const realExpensesByProp: Record<string, number> = {};
+
+    (realPaymentsRaw || []).forEach((p: any) => {
+        if (!p.property_id) return;
+        realIncomeByProp[p.property_id] = (realIncomeByProp[p.property_id] || 0) + (parseFloat(p.amount) || 0);
+    });
+    (realExpensesRaw || []).forEach((e: any) => {
+        if (!e.property_id) return;
+        realExpensesByProp[e.property_id] = (realExpensesByProp[e.property_id] || 0) + (parseFloat(e.amount) || 0);
+    });
+    // Convert to monthly averages
+    Object.keys(realIncomeByProp).forEach(k   => { realIncomeByProp[k]   /= 3; });
+    Object.keys(realExpensesByProp).forEach(k => { realExpensesByProp[k] /= 3; });
 
     let totalEquity = 0;
     let monthlyCashFlow = 0;
@@ -50,52 +79,40 @@ export async function getDashboardMetrics() {
         const equity = value - loanAmount;
         totalEquity += equity;
 
-        // --- CASH FLOW CALCULATION ---
-        // --- CASH FLOW CALCULATION ---
-        // Actual Cash Flow: Actual Rent - (Taxes + Insurance + Debt + Mgmt)
-        // If no financials, we skip adding to the total (or could estimate, but user wants "real" data).
-        if (fin) {
-            const currentRent = prop.tenants?.reduce((sum: number, t: any) => sum + (t.status === 'active' ? (t.rent_amount || 0) : 0), 0) || 0;
+        // --- CASH FLOW CALCULATION (real data first, estimated fallback) ---
+        {
+            const realIncome   = realIncomeByProp[prop.id]   ?? 0;
+            const realExpenses = realExpensesByProp[prop.id] ?? 0;
+            const hasRealData  = realIncome > 0 || realExpenses > 0;
 
-            const taxesMo = (fin.taxes_annual || 0) / 12;
-            const insMo = (fin.insurance_annual || 0) / 12;
-            const mgmt = currentRent * ((fin.management_rate || 0) / 100);
+            let cashFlow = 0;
 
-            // Debt Service
-            const value = prop.arv_estimate || prop.purchase_price || 0;
-            const loanAmount = value * ((fin.refinance_ltv || 75) / 100);
+            if (hasRealData) {
+                // ✅ Real: 3-month average of actual payments minus actual expenses
+                cashFlow = realIncome - realExpenses;
+                monthlyCashFlow += cashFlow;
+            } else if (fin) {
+                // ⚠️ Estimated: no transactions recorded yet — use financial model
+                const currentRent = prop.tenants?.reduce((sum: number, t: any) =>
+                    sum + (t.status === 'active' ? (t.rent_amount || 0) : 0), 0) || 0;
+                const propVal = prop.arv_estimate || prop.purchase_price || 0;
+                const loan    = propVal * ((fin.refinance_ltv || 75) / 100);
+                cashFlow = estimatedMonthlyCashFlow({
+                    rent:            currentRent,
+                    loanAmount:      loan,
+                    annualRate:      fin.refinance_rate || 7.0,
+                    taxesAnnual:     fin.taxes_annual,
+                    insuranceAnnual: fin.insurance_annual,
+                    managementRate:  fin.management_rate,
+                });
+                monthlyCashFlow += cashFlow;
 
-            const rate = fin.refinance_rate || 7.0;
-            let debtService = 0;
-            if (loanAmount > 0 && rate > 0) {
-                const r = rate / 100 / 12;
-                const n = 360;
-                debtService = (loanAmount * r) / (1 - Math.pow(1 + r, -n));
-            }
-
-            const fixedExpenses = taxesMo + insMo + debtService;
-            const cashFlow = currentRent - (fixedExpenses + mgmt);
-
-            monthlyCashFlow += cashFlow;
-
-            // ROI / CoC Calculation
-            // Cash Left = (Purchase + Closing + Rehab) - RefiLoan. Or simpler: Cash Invested.
-            // If completed Brrrr, Cash Left might be 0 or negative (infinite).
-            // Let's use "Cash Invested" as denominator for standard CoC if not refied yet?
-            // Or assume BRRRR logic: Cash Left In Deal.
-            // Total Cost Basis
-            const totalCost = (prop.purchase_price || 0) + (fin.closing_costs_buy || 0) + (fin.rehab_cost || 0);
-            const refiLoan = loanAmount; // Using the refi amount calculated above
-            let cashLeft = totalCost - refiLoan;
-            // If hasn't refied (loanAmount is 0 or low), this is just total cost?
-            // Actually, if status != sold, we assume holding.
-
-            // Simplified: If cashLeft <= 0, we can say infinite but for averaging let's cap it or exclude?
-            // Usually Avg ROI excludes infinite or outliers.
-            if (cashLeft > 0) {
-                const roi = ((cashFlow * 12) / cashLeft) * 100;
-                roiSum += roi;
-                roiCount++;
+                const totalCost = (prop.purchase_price || 0) + (fin.closing_costs_buy || 0) + (fin.rehab_cost || 0);
+                const cashLeft  = totalCost - loan;
+                if (cashLeft > 0) {
+                    roiSum += ((cashFlow * 12) / cashLeft) * 100;
+                    roiCount++;
+                }
             }
         }
 
@@ -127,18 +144,39 @@ export async function getDashboardMetrics() {
         }
     });
 
-    // Generate Mock Trend Data based on Total Equity
-    // Smooth curve growing to current Total Equity
+    // Real equity trend: mortgage amortization per property over past 12 months
     const today = new Date();
     for (let i = 11; i >= 0; i--) {
-        const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-        const monthName = d.toLocaleString('default', { month: 'short' });
-        // Random fluctuation but generally growing
-        const growthFactor = 0.8 + (0.2 * (11 - i) / 11); // 80% to 100%
-        equityTrend.push({
-            name: monthName,
-            value: Math.round(totalEquity * growthFactor)
+        const monthDate = new Date(today.getFullYear(), today.getMonth() - i, 1);
+        const monthName = monthDate.toLocaleString('default', { month: 'short' });
+
+        let totalEquityAtMonth = 0;
+
+        properties.forEach(prop => {
+            const fin   = prop.financials?.[0];
+            const value = prop.arv_estimate || prop.purchase_price || 0;
+            if (!value) return;
+
+            const ltv         = fin?.refinance_ltv || 75;
+            const initialLoan = value * (ltv / 100);
+
+            if (!fin?.refinance_rate || initialLoan <= 0) {
+                totalEquityAtMonth += value - initialLoan;
+                return;
+            }
+
+            // Approximate loan start from property created_at
+            const purchaseDate = new Date((prop as any).created_at || today);
+            const monthsSincePurchase = Math.max(0,
+                (monthDate.getFullYear() - purchaseDate.getFullYear()) * 12 +
+                (monthDate.getMonth()    - purchaseDate.getMonth())
+            );
+
+            const balance = remainingLoanBalance(initialLoan, fin.refinance_rate, monthsSincePurchase);
+            totalEquityAtMonth += value - balance;
         });
+
+        equityTrend.push({ name: monthName, value: Math.round(totalEquityAtMonth) });
     }
 
     // Fetch maintenance requests
@@ -178,6 +216,38 @@ export async function getDashboardMetrics() {
         .map(([name, value]) => ({ name: name.charAt(0).toUpperCase() + name.slice(1), value }))
         .sort((a, b) => b.value - a.value);
 
+    // ── Income vs Expenses (last 6 months) ───────────────────────────────
+    const now6 = new Date();
+    const incomeExpenseSlots: { key: string; label: string; income: number; expenses: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date(now6.getFullYear(), now6.getMonth() - i, 1);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        incomeExpenseSlots.push({ key, label: d.toLocaleString("default", { month: "short", year: "2-digit" }), income: 0, expenses: 0 });
+    }
+    const ie_startDate = `${incomeExpenseSlots[0].key}-01`;
+
+    const [{ data: iePayments }, { data: ieExpenses }] = await Promise.all([
+        supabase.from("payments").select("amount, payment_date").eq("user_id", user.id).eq("status", "paid").gte("payment_date", ie_startDate),
+        supabase.from("expenses").select("amount, expense_date").eq("user_id", user.id).gte("expense_date", ie_startDate),
+    ]);
+
+    (iePayments || []).forEach((p: any) => {
+        const slot = incomeExpenseSlots.find(s => s.key === p.payment_date?.slice(0, 7));
+        if (slot) slot.income += parseFloat(p.amount) || 0;
+    });
+    (ieExpenses || []).forEach((e: any) => {
+        const slot = incomeExpenseSlots.find(s => s.key === e.expense_date?.slice(0, 7));
+        if (slot) slot.expenses += parseFloat(e.amount) || 0;
+    });
+
+    const incomeExpenseTrend = incomeExpenseSlots.map(({ label, income, expenses }) => ({ name: label, income, expenses }));
+
+    // Also compute total income this month
+    const currentMonthKey = `${now6.getFullYear()}-${String(now6.getMonth() + 1).padStart(2, "0")}`;
+    const currentSlot = incomeExpenseSlots.find(s => s.key === currentMonthKey);
+    const monthlyIncome  = currentSlot?.income   ?? 0;
+    const monthlyExpenses = currentSlot?.expenses ?? 0;
+
     // Fetch reminders
     const { data: dbReminders, error: remError } = await supabase
         .from('reminders')
@@ -208,23 +278,30 @@ export async function getDashboardMetrics() {
 
     // Per-property summary for the "at a glance" table
     const propertySummaries = properties.map(prop => {
-        const fin  = prop.financials?.[0];
-        const tenant = prop.tenants?.[0];
-        const value   = prop.arv_estimate || prop.purchase_price || 0;
-        const ltv     = fin?.refinance_ltv || 75;
-        const loan    = value * (ltv / 100);
-        const equity  = value - loan;
+        const fin    = prop.financials?.[0];
+        const value  = prop.arv_estimate || prop.purchase_price || 0;
+        const ltv    = fin?.refinance_ltv || 75;
+        const loan   = value * (ltv / 100);
+        const equity = value - loan;
+
+        // Use real 3-month avg if available, else estimated
+        const realIncome   = realIncomeByProp[prop.id]   ?? 0;
+        const realExpenses = realExpensesByProp[prop.id] ?? 0;
+        const hasRealData  = realIncome > 0 || realExpenses > 0;
 
         let cashFlow = 0;
-        if (fin) {
-            const rent  = prop.tenants?.reduce((s: number, t: any) => s + (t.status === 'active' ? (t.rent_amount || 0) : 0), 0) || 0;
-            const taxes = (fin.taxes_annual || 0) / 12;
-            const ins   = (fin.insurance_annual || 0) / 12;
-            const mgmt  = rent * ((fin.management_rate || 0) / 100);
-            const r     = (fin.refinance_rate || 7) / 100 / 12;
-            const n     = 360;
-            const debt  = loan > 0 && r > 0 ? (loan * r) / (1 - Math.pow(1 + r, -n)) : 0;
-            cashFlow    = rent - (taxes + ins + mgmt + debt);
+        if (hasRealData) {
+            cashFlow = realIncome - realExpenses;
+        } else if (fin) {
+            const rent = prop.tenants?.reduce((s: number, t: any) => s + (t.status === 'active' ? (t.rent_amount || 0) : 0), 0) || 0;
+            cashFlow = estimatedMonthlyCashFlow({
+                rent,
+                loanAmount:      loan,
+                annualRate:      fin.refinance_rate || 7.0,
+                taxesAnnual:     fin.taxes_annual,
+                insuranceAnnual: fin.insurance_annual,
+                managementRate:  fin.management_rate,
+            });
         }
 
         return {
@@ -234,7 +311,7 @@ export async function getDashboardMetrics() {
             value,
             equity,
             cashFlow,
-            rent: tenant?.rent_amount || 0,
+            rent: prop.tenants?.reduce((s: number, t: any) => s + (t.status === 'active' ? (t.rent_amount || 0) : 0), 0) || 0,
         };
     });
 
@@ -248,11 +325,14 @@ export async function getDashboardMetrics() {
             avgRoi,
             openMaintenance,
             totalMaintenanceSpent,
+            monthlyIncome,
+            monthlyExpenses,
         },
         equityTrend,
         maintenanceAlerts,
         propertySummaries,
         maintenanceTrend,
         maintenanceByCategory,
+        incomeExpenseTrend,
     };
 }

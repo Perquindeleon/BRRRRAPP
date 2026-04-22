@@ -30,6 +30,7 @@ interface Contractor {
 }
 
 export default function ContractorManager({ contractors }: { contractors: Contractor[] }) {
+    const router = useRouter();
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [isEditOpen, setIsEditOpen] = useState(false);
     const [isAiOpen, setIsAiOpen] = useState(false);
@@ -147,6 +148,7 @@ export default function ContractorManager({ contractors }: { contractors: Contra
             >
                 <form action={async (formData) => {
                     await addContractor(formData);
+                    router.refresh();
                     setIsAddOpen(false);
                 }} className="space-y-4">
                     <div className="space-y-2">
@@ -209,6 +211,7 @@ export default function ContractorManager({ contractors }: { contractors: Contra
                 >
                     <form action={async (formData) => {
                         await updateContractor(formData);
+                        router.refresh();
                         setIsEditOpen(false);
                     }} className="space-y-4">
                         <input type="hidden" name="id" value={selectedContractor.id} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -38,10 +38,17 @@ import {
     ToggleRight,
 } from "lucide-react";
 
+const DRAFT_KEY = "brrrr_analyzer_draft";
+
 export function AnalyzerForm({ initialData, mode = 'create', initialStrategy }: { initialData?: any, mode?: 'create' | 'edit', initialStrategy?: 'brrrr' | 'flip_fix' }) {
     const router = useRouter();
     const supabase = createClient();
     const [loading, setLoading] = useState(false);
+
+    // Draft persistence refs
+    const didMountRef    = useRef(false);
+    const autosaveRef    = useRef<ReturnType<typeof setTimeout>>();
+    const [showDraftBanner, setShowDraftBanner] = useState(false);
 
     // --- State: Strategy Selection ---
     const [strategy, setStrategy] = useState<'brrrr' | 'flip_fix'>(initialStrategy ?? 'brrrr');
@@ -174,6 +181,79 @@ export function AnalyzerForm({ initialData, mode = 'create', initialStrategy }: 
             }
         }
     }, [initialData]);
+
+    // ── Draft persistence ────────────────────────────────────────────────────
+
+    // 1. Restore draft from localStorage on mount (create mode only, no URL params)
+    useEffect(() => {
+        if (mode !== 'create' || initialData) return;
+        try {
+            const raw = localStorage.getItem(DRAFT_KEY);
+            if (!raw) return;
+            const d = JSON.parse(raw);
+            if (d.strategy)              setStrategy(d.strategy);
+            if (d.address)               setAddress(d.address);
+            if (d.purchasePrice)         setPurchasePrice(d.purchasePrice);
+            if (d.closingCostsBuy)       setClosingCostsBuy(d.closingCostsBuy);
+            if (d.closingCostsMode)      setClosingCostsMode(d.closingCostsMode);
+            if (d.rehabBudget)           setRehabBudget(d.rehabBudget);
+            if (d.projectDuration)       setProjectDuration(d.projectDuration);
+            if (d.downPaymentPercent)    setDownPaymentPercent(d.downPaymentPercent);
+            if (d.interestRateInitial)   setInterestRateInitial(d.interestRateInitial);
+            if (d.arv)                   setArv(d.arv);
+            if (d.refiLtv)               setRefiLtv(d.refiLtv);
+            if (d.refiRate)              setRefiRate(d.refiRate);
+            if (d.closingCostsRefi)      setClosingCostsRefi(d.closingCostsRefi);
+            if (d.monthlyRent)           setMonthlyRent(d.monthlyRent);
+            if (d.propertyTaxYear)       setPropertyTaxYear(d.propertyTaxYear);
+            if (d.insuranceYear)         setInsuranceYear(d.insuranceYear);
+            if (d.hoaMonth)              setHoaMonth(d.hoaMonth);
+            if (d.utilitiesMonth)        setUtilitiesMonth(d.utilitiesMonth);
+            if (d.vacancyRate)           setVacancyRate(d.vacancyRate);
+            if (d.capexRate)             setCapexRate(d.capexRate);
+            if (d.managementRate)        setManagementRate(d.managementRate);
+            if (d.flipFixData && Object.keys(d.flipFixData).length > 0) setFlipFixData(d.flipFixData);
+            setShowDraftBanner(true);
+        } catch { /* corrupt localStorage — ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // 2. Auto-save draft whenever any field changes (skip very first render)
+    useEffect(() => {
+        if (!didMountRef.current) { didMountRef.current = true; return; }
+        if (mode !== 'create') return;
+
+        clearTimeout(autosaveRef.current);
+        autosaveRef.current = setTimeout(() => {
+            const draft = {
+                strategy, address, purchasePrice, closingCostsBuy, closingCostsMode,
+                rehabBudget, projectDuration, downPaymentPercent, interestRateInitial,
+                arv, refiLtv, refiRate, closingCostsRefi, monthlyRent,
+                propertyTaxYear, insuranceYear, hoaMonth, utilitiesMonth,
+                vacancyRate, capexRate, managementRate, flipFixData,
+            };
+            try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch { /* storage full */ }
+        }, 300);
+
+        return () => clearTimeout(autosaveRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [strategy, address, purchasePrice, closingCostsBuy, closingCostsMode,
+        rehabBudget, projectDuration, downPaymentPercent, interestRateInitial,
+        arv, refiLtv, refiRate, closingCostsRefi, monthlyRent,
+        propertyTaxYear, insuranceYear, hoaMonth, utilitiesMonth,
+        vacancyRate, capexRate, managementRate, flipFixData]);
+
+    // 3. Warn before browser close/refresh if there's unsaved data
+    const isDirty = mode === 'create' && (
+        purchasePrice > 0 || arv > 0 || monthlyRent > 0 || address.length > 0 ||
+        (strategy === 'flip_fix' && Object.keys(flipFixData).length > 0)
+    );
+    useEffect(() => {
+        if (!isDirty) return;
+        const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+    }, [isDirty]);
 
     // --- Derived Math ---
     // ... [Math remains unchanged] 
@@ -333,6 +413,7 @@ export function AnalyzerForm({ initialData, mode = 'create', initialStrategy }: 
                 }
             }
 
+            try { localStorage.removeItem(DRAFT_KEY); } catch {}
             alert("Deal Saved Successfully! 🚀");
         } catch (error: any) {
             console.error("Save failed:", error);
@@ -344,6 +425,33 @@ export function AnalyzerForm({ initialData, mode = 'create', initialStrategy }: 
 
     return (
         <div className="min-h-screen bg-background p-6 space-y-6">
+            {/* Draft restored banner */}
+            {showDraftBanner && (
+                <div className="flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-400">
+                    <span>Draft restored — your previous analysis is ready to continue.</span>
+                    <div className="flex items-center gap-3">
+                        <button
+                            type="button"
+                            className="text-xs font-bold text-red-400 hover:text-red-300 transition-colors"
+                            onClick={() => {
+                                if (!confirm("Discard this draft and start fresh?")) return;
+                                try { localStorage.removeItem(DRAFT_KEY); } catch {}
+                                window.location.reload();
+                            }}
+                        >
+                            Discard
+                        </button>
+                        <button
+                            type="button"
+                            className="text-xs font-bold text-amber-300 hover:text-amber-200 transition-colors"
+                            onClick={() => setShowDraftBanner(false)}
+                        >
+                            Dismiss
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex flex-col gap-2">
                     <div>
@@ -386,7 +494,11 @@ export function AnalyzerForm({ initialData, mode = 'create', initialStrategy }: 
                 </div>
                 <div className="flex gap-2">
 
-                    <Button variant="outline" onClick={() => router.back()}>Cancel</Button>
+                    <Button variant="outline" onClick={() => {
+                        if (isDirty && !confirm("You have unsaved changes. Discard and leave?")) return;
+                        try { localStorage.removeItem(DRAFT_KEY); } catch {}
+                        router.back();
+                    }}>Cancel</Button>
                     <Button onClick={handleSave} disabled={loading} className={cn("bg-primary text-primary-foreground hover:bg-primary/90", strategy === 'flip_fix' && "bg-blue-600 hover:bg-blue-700")}>
                         {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                         <Save className="mr-2 h-4 w-4" />

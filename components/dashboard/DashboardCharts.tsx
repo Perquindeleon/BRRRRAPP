@@ -2,7 +2,7 @@
 
 import {
     AreaChart, Area, BarChart, Bar, XAxis, YAxis,
-    CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+    CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -76,7 +76,7 @@ function KpiCard({
 const CAT_COLORS = ["#7c3aed", "#6d28d9", "#4f46e5", "#2563eb", "#0891b2", "#059669", "#d97706", "#dc2626"];
 
 export function DashboardCharts({ data }: { data: any }) {
-    const { equityTrend, maintenanceAlerts, stats, propertySummaries = [], maintenanceTrend = [], maintenanceByCategory = [] } = data;
+    const { equityTrend, maintenanceAlerts, stats, propertySummaries = [], maintenanceTrend = [], maintenanceByCategory = [], incomeExpenseTrend = [] } = data;
 
     const cashFlowPositive = stats.monthlyCashFlow >= 0;
     const latestEquity     = equityTrend?.[equityTrend.length - 1]?.value ?? 0;
@@ -131,6 +131,76 @@ export function DashboardCharts({ data }: { data: any }) {
                     accent={stats.openMaintenance > 0 ? "red" : undefined}
                 />
             </div>
+
+            {/* ── Income vs Expenses ────────────────────────────────────── */}
+            <Card className="border border-border bg-card">
+                <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between">
+                        <div>
+                            <CardTitle className="text-base font-bold">Income vs Expenses</CardTitle>
+                            <CardDescription>Rent collected vs total expenses — last 6 months</CardDescription>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs">
+                            <span className="flex items-center gap-1.5 font-semibold text-emerald-400">
+                                <span className="h-2 w-2 rounded-full bg-emerald-400 inline-block" />
+                                Income
+                            </span>
+                            <span className="flex items-center gap-1.5 font-semibold text-red-400">
+                                <span className="h-2 w-2 rounded-full bg-red-400 inline-block" />
+                                Expenses
+                            </span>
+                            <Link href="/dashboard/expenses" className="flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors ml-2">
+                                Manage <ArrowRight className="h-3 w-3" />
+                            </Link>
+                        </div>
+                    </div>
+                    {/* This month summary */}
+                    <div className="flex gap-4 mt-2">
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">This month income:</span>
+                            <span className="text-sm font-bold text-emerald-400">${fmt(stats.monthlyIncome ?? 0)}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">Expenses:</span>
+                            <span className="text-sm font-bold text-red-400">${fmt(stats.monthlyExpenses ?? 0)}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">Net:</span>
+                            <span className={cn("text-sm font-bold", (stats.monthlyIncome ?? 0) - (stats.monthlyExpenses ?? 0) >= 0 ? "text-emerald-400" : "text-red-400")}>
+                                {(stats.monthlyIncome ?? 0) - (stats.monthlyExpenses ?? 0) >= 0 ? "+" : ""}${fmt((stats.monthlyIncome ?? 0) - (stats.monthlyExpenses ?? 0))}
+                            </span>
+                        </div>
+                    </div>
+                </CardHeader>
+                <CardContent>
+                    {incomeExpenseTrend.every((m: any) => m.income === 0 && m.expenses === 0) ? (
+                        <div className="h-[220px] flex flex-col items-center justify-center text-muted-foreground gap-2">
+                            <DollarSign className="h-8 w-8 opacity-30" />
+                            <p className="text-sm">No income or expense data yet</p>
+                            <Link href="/dashboard/expenses" className="text-xs text-primary hover:underline">Add your first expense →</Link>
+                        </div>
+                    ) : (
+                        <div className="h-[220px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={incomeExpenseTrend} margin={{ top: 4, right: 8, left: 0, bottom: 0 }} barGap={4}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                                    <XAxis dataKey="name" axisLine={false} tickLine={false}
+                                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} dy={6} />
+                                    <YAxis axisLine={false} tickLine={false} width={52}
+                                        tickFormatter={v => `$${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`}
+                                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: "hsl(var(--card))", color: "hsl(var(--foreground))", borderRadius: "8px", border: "1px solid hsl(var(--border))" }}
+                                        formatter={(v: number, name: string) => [`$${v.toLocaleString()}`, name === "income" ? "Income" : "Expenses"]}
+                                    />
+                                    <Bar dataKey="income"   radius={[4,4,0,0]} fill="#10b981" maxBarSize={32} />
+                                    <Bar dataKey="expenses" radius={[4,4,0,0]} fill="#ef4444" maxBarSize={32} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
 
             {/* ── Equity Chart + Reminders ──────────────────────────────── */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

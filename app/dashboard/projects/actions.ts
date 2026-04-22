@@ -2,7 +2,6 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 
 export async function getProjects() {
     const supabase = createClient();
@@ -168,11 +167,18 @@ export async function addTenant(formData: FormData) {
             return { error: "End date must be after start date" };
         }
 
-        const { data: existingTenants } = await supabase
+        // For multifamily (unit_number provided) only check that specific unit
+        let overlapQuery = supabase
             .from("tenants")
             .select("lease_start, lease_end")
             .eq("property_id", propertyId)
             .neq("status", "past");
+
+        if (unitNumber) {
+            overlapQuery = overlapQuery.eq("unit_number", unitNumber);
+        }
+
+        const { data: existingTenants } = await overlapQuery;
 
         if (existingTenants && existingTenants.length > 0) {
             const hasOverlap = existingTenants.some(t => {
@@ -183,7 +189,11 @@ export async function addTenant(formData: FormData) {
             });
 
             if (hasOverlap) {
-                return { error: "Property is occupied during these dates. Check existing leases." };
+                return {
+                    error: unitNumber
+                        ? `${unitNumber} is already occupied during these dates.`
+                        : "Property is occupied during these dates. Check existing leases."
+                };
             }
         }
     }
@@ -276,33 +286,93 @@ export async function getPayments(tenantId: string) {
     return data;
 }
 
-export async function addPayment(formData: FormData) {
+export async function addPayment(params: {
+    tenantId: string;
+    propertyId: string;
+    amount: number;
+    paymentDate: string;
+    status: string;
+    method: string;
+    notes: string;
+}) {
     const supabase = createClient();
-    const tenantId = formData.get("tenant_id") as string;
-    const propertyId = formData.get("property_id") as string;
-
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { error: "Unauthorized" };
 
-    const data = {
-        user_id: user.id,
-        tenant_id: tenantId,
-        property_id: propertyId,
-        amount: parseFloat(formData.get("amount") as string) || 0,
-        payment_date: formData.get("payment_date") as string || new Date().toISOString().split('T')[0],
-        status: formData.get("status") as string || 'paid',
-        method: formData.get("method") as string || 'transfer',
-        notes: formData.get("notes") as string || ''
+    const { tenantId, propertyId, amount, paymentDate, status, method, notes } = params;
+
+    // Try full insert first; if columns are missing (code 42703) fall back to minimal
+    let insertError: any = null;
+    const fullRecord: any = {
+        user_id:      user.id,
+        tenant_id:    tenantId,
+        amount,
+        payment_date: paymentDate || new Date().toISOString().split('T')[0],
+        status:       status || 'paid',
     };
+    // Add optional columns – these may not exist in older schemas
+    if (propertyId) fullRecord.property_id = propertyId;
+    fullRecord.method = method || 'transfer';
+    fullRecord.notes  = notes  || '';
 
-    const { error } = await supabase.from("payments").insert(data);
+    const res1 = await supabase.from("payments").insert(fullRecord);
+    insertError = res1.error;
 
-    if (error) {
-        console.error("Error adding payment:", error);
-        return { error: "Failed to add payment" };
+    // Retry without optional columns if any column is missing
+    if (insertError?.code === '42703') {
+        const minimal: any = {
+            user_id:      user.id,
+            tenant_id:    tenantId,
+            amount,
+            payment_date: fullRecord.payment_date,
+            status:       fullRecord.status,
+        };
+        const res2 = await supabase.from("payments").insert(minimal);
+        insertError = res2.error;
     }
 
+    if (insertError) {
+        console.error("Error adding payment:", insertError);
+        return { error: insertError.message || "Failed to add payment" };
+    }
+
+    // ── Grace period check ──────────────────────────────────────────────
+    // If the payment is marked 'paid' and the payment DATE falls within the
+    // grace period (day <= late_fee_day), remove any pending late-fee charge
+    // for that month and reset the tenant to 'active'.
+    if (status === 'paid') {
+        const { data: tenant } = await supabase
+            .from("tenants")
+            .select("late_fee_day, status")
+            .eq("id", tenantId)
+            .single();
+
+        const dueDay     = tenant?.late_fee_day ?? 5;
+        const paidDay    = paymentDate ? parseInt(paymentDate.split('-')[2]) : new Date().getDate();
+        const withinGrace = paidDay <= dueDay;
+
+        if (withinGrace) {
+            // Delete any pending late-fee charges for the same month
+            const [y, m] = (paymentDate || new Date().toISOString().split('T')[0]).split('-');
+            const monthStart = `${y}-${m}-01`;
+            await supabase
+                .from("payments")
+                .delete()
+                .eq("tenant_id", tenantId)
+                .eq("status", "pending")
+                .gte("payment_date", monthStart)
+                .ilike("notes", "Late fee%");
+        }
+
+        // Always reset tenant to active when rent is paid
+        if (tenant?.status === 'late' || withinGrace) {
+            await supabase.from("tenants").update({ status: 'active' }).eq("id", tenantId);
+        }
+    }
+
+    revalidatePath("/dashboard/tenants");
     revalidatePath(`/dashboard/properties`);
+    revalidatePath(`/dashboard/projects/${propertyId}`);
     return { success: true };
 }
 
@@ -316,6 +386,81 @@ export async function deletePayment(paymentId: string) {
     }
 
     revalidatePath(`/dashboard/properties`);
+    return { success: true };
+}
+
+/** Apply a late fee charge to a tenant and mark them as 'late' */
+export async function applyLateFee(tenantId: string, propertyId: string, lateFeeAmount: number) {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: "Unauthorized" };
+
+    const today = new Date();
+    const monthLabel  = today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const todayStr    = today.toISOString().split('T')[0];
+    const monthStart  = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+
+    // Prevent duplicate late fee for same tenant same month
+    const { data: existing } = await supabase
+        .from("payments")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("status", "pending")
+        .gte("payment_date", monthStart)
+        .ilike("notes", "Late fee%")
+        .maybeSingle();
+
+    if (existing) return { error: "Late fee already applied for this month" };
+
+    // Mark tenant as late
+    await supabase.from("tenants").update({ status: 'late' }).eq("id", tenantId);
+
+    // Insert a late-fee charge into payments
+    const { error } = await supabase.from("payments").insert({
+        user_id: user.id,
+        tenant_id: tenantId,
+        property_id: propertyId,
+        amount: lateFeeAmount,
+        payment_date: todayStr,
+        status: 'pending',
+        method: 'other',
+        notes: `Late fee — ${monthLabel}`,
+    });
+
+    if (error) return { error: error.message };
+
+    revalidatePath("/dashboard/tenants");
+    revalidatePath("/dashboard/properties");
+    revalidatePath(`/dashboard/projects/${propertyId}`);
+    return { success: true };
+}
+
+/** Record full rent + late fee payment and reset tenant status to active */
+export async function markRentPaid(tenantId: string, propertyId: string, amount: number) {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: "Unauthorized" };
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    await supabase.from("tenants").update({ status: 'active' }).eq("id", tenantId);
+
+    const { error } = await supabase.from("payments").insert({
+        user_id: user.id,
+        tenant_id: tenantId,
+        property_id: propertyId,
+        amount,
+        payment_date: todayStr,
+        status: 'paid',
+        method: 'transfer',
+        notes: 'Rent payment',
+    });
+
+    if (error) return { error: error.message };
+
+    revalidatePath("/dashboard/tenants");
+    revalidatePath("/dashboard/properties");
+    revalidatePath(`/dashboard/projects/${propertyId}`);
     return { success: true };
 }
 

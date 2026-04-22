@@ -3,9 +3,10 @@
 import * as React from "react";
 import {
     Wrench, Plus, AlertTriangle, CheckCircle2, Clock, XCircle,
-    User, Building, Phone, Mail, Trash2, UserCheck,
+    User, Building, Phone, Mail, Trash2, UserCheck, Pencil,
     DollarSign, FileText, Calendar, Zap, Link2, Copy, Check
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +17,7 @@ import {
     markCompleted,
     closeRequest,
     deleteMaintenanceRequest,
+    updateMaintenanceRequest,
 } from "./actions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -107,6 +109,7 @@ export default function MaintenanceView({
     properties: Property[];
     contractors: Contractor[];
 }) {
+    const router = useRouter();
     const [requests, setRequests] = React.useState<Request[]>(initialRequests);
     const [activeTab, setActiveTab] = React.useState("all");
 
@@ -115,6 +118,11 @@ export default function MaintenanceView({
     const [assignTarget, setAssignTarget] = React.useState<Request | null>(null);
     const [closeTarget, setCloseTarget] = React.useState<Request | null>(null);
     const [detailTarget, setDetailTarget] = React.useState<Request | null>(null);
+    const [editTarget, setEditTarget] = React.useState<Request | null>(null);
+
+    // Edit form state
+    const [editLoading, setEditLoading] = React.useState(false);
+    const [editError, setEditError] = React.useState("");
 
     // Create form state
     const [createLoading, setCreateLoading] = React.useState(false);
@@ -163,7 +171,34 @@ export default function MaintenanceView({
         if (result?.error) { setCreateError(result.error); return; }
         setShowCreate(false);
         // Refresh by reloading — simple approach since server action revalidates
-        window.location.reload();
+        router.refresh();
+    }
+
+    async function handleEdit(e: React.FormEvent<HTMLFormElement>) {
+        e.preventDefault();
+        if (!editTarget) return;
+        setEditLoading(true); setEditError("");
+        const fd = new FormData(e.currentTarget);
+        const res = await updateMaintenanceRequest(editTarget.id, {
+            title:         fd.get("title") as string,
+            description:   fd.get("description") as string,
+            category:      fd.get("category") as string,
+            priority:      fd.get("priority") as string,
+            estimatedCost: parseFloat(fd.get("estimated_cost") as string) || undefined,
+        });
+        setEditLoading(false);
+        if (res?.error) { setEditError(res.error); return; }
+        setRequests(prev => prev.map(r => r.id === editTarget.id
+            ? { ...r,
+                title:          fd.get("title") as string,
+                description:    fd.get("description") as string,
+                category:       fd.get("category") as string,
+                priority:       fd.get("priority") as string,
+                estimated_cost: parseFloat(fd.get("estimated_cost") as string) || r.estimated_cost,
+              }
+            : r
+        ));
+        setEditTarget(null);
     }
 
     async function handleAssign(e: React.FormEvent) {
@@ -174,7 +209,7 @@ export default function MaintenanceView({
         setAssignLoading(false);
         setAssignTarget(null);
         setSelectedContractor("");
-        window.location.reload();
+        router.refresh();
     }
 
     async function handleClose(e: React.FormEvent) {
@@ -186,12 +221,12 @@ export default function MaintenanceView({
         setCloseTarget(null);
         setCloseActualCost("");
         setCloseNotes("");
-        window.location.reload();
+        router.refresh();
     }
 
     async function handleMarkCompleted(req: Request) {
         await markCompleted(req.id, req.actual_cost || 0, req.notes || "");
-        window.location.reload();
+        router.refresh();
     }
 
     async function handleDelete(id: string) {
@@ -296,6 +331,7 @@ export default function MaintenanceView({
                             onComplete={() => handleMarkCompleted(req)}
                             onDelete={() => handleDelete(req.id)}
                             onDetail={() => setDetailTarget(req)}
+                            onEdit={() => { setEditTarget(req); setEditError(""); }}
                         />
                     ))}
                 </div>
@@ -497,6 +533,58 @@ export default function MaintenanceView({
                 </Modal>
             )}
 
+            {/* ── EDIT MODAL ── */}
+            {editTarget && (
+                <Modal title="Edit Request" onClose={() => setEditTarget(null)}>
+                    <form onSubmit={handleEdit} className="space-y-4">
+                        {editError && <div className="p-3 rounded-md bg-destructive/15 text-destructive text-sm">{editError}</div>}
+
+                        <div className="space-y-1.5">
+                            <Label>Title <span className="text-red-500">*</span></Label>
+                            <input name="title" required defaultValue={editTarget.title}
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                                <Label>Category</Label>
+                                <select name="category" defaultValue={editTarget.category}
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                                    {CATEGORIES.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+                                </select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label>Priority</Label>
+                                <select name="priority" defaultValue={editTarget.priority}
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                                    {PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <Label>Description</Label>
+                            <textarea name="description" rows={3} defaultValue={editTarget.description}
+                                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none" />
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <Label>Estimated Cost ($)</Label>
+                            <input name="estimated_cost" type="number" defaultValue={editTarget.estimated_cost || ""}
+                                placeholder="0.00"
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2">
+                            <Button type="button" variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
+                            <Button type="submit" disabled={editLoading} className="bg-violet-600 hover:bg-violet-700 text-white">
+                                {editLoading ? "Saving…" : "Save Changes"}
+                            </Button>
+                        </div>
+                    </form>
+                </Modal>
+            )}
+
             {/* ── DETAIL MODAL ── */}
             {detailTarget && (
                 <Modal title="Request Details" onClose={() => setDetailTarget(null)}>
@@ -510,7 +598,7 @@ export default function MaintenanceView({
 // ─── Request Card ─────────────────────────────────────────────────────────────
 
 function RequestCard({
-    req, onAssign, onClose, onComplete, onDelete, onDetail
+    req, onAssign, onClose, onComplete, onDelete, onDetail, onEdit
 }: {
     req: Request;
     onAssign: () => void;
@@ -518,6 +606,7 @@ function RequestCard({
     onComplete: () => void;
     onDelete: () => void;
     onDetail: () => void;
+    onEdit: () => void;
 }) {
     const cfg = statusConfig[req.status] || statusConfig.open;
     const StatusIcon = cfg.icon;
@@ -618,12 +707,22 @@ function RequestCard({
                         <DollarSign className="h-3 w-3 mr-1" /> Close & Log Expense
                     </Button>
                 )}
-                <button
-                    onClick={onDelete}
-                    className="ml-auto h-7 w-7 flex items-center justify-center rounded-md border border-border hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors"
-                >
-                    <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                <div className="ml-auto flex items-center gap-1">
+                    <button
+                        onClick={onEdit}
+                        className="h-7 w-7 flex items-center justify-center rounded-md border border-border hover:bg-amber-500/10 hover:text-amber-500 hover:border-amber-500/30 transition-colors"
+                        title="Edit request"
+                    >
+                        <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                        onClick={onDelete}
+                        className="h-7 w-7 flex items-center justify-center rounded-md border border-border hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors"
+                        title="Delete request"
+                    >
+                        <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                </div>
             </div>
         </div>
     );
