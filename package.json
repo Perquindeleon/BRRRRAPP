@@ -6,7 +6,9 @@
         "dev": "next dev",
         "build": "next build",
         "start": "next start",
-        "lint": "next lint"
+        "lint": "next lint",
+        "remotion": "remotion studio animaciones/index.ts",
+        "render": "remotion render animaciones/index.ts StockChart out/StockChart.mp4"
     },
     "dependencies": {
         "@dnd-kit/core": "^6.3.1",
@@ -18,6 +20,7 @@
         "@radix-ui/react-progress": "^1.1.8",
         "@radix-ui/react-select": "^2.1.4",
         "@radix-ui/react-tabs": "^1.1.2",
+        "@remotion/cli": "^4.0.450",
         "@supabase/ssr": "^0.1.0",
         "@supabase/supabase-js": "^2.87.0",
         "@tanstack/react-query": "^5.17.0",
@@ -35,6 +38,7 @@
         "react-day-picker": "^8.10.1",
         "react-dom": "^18",
         "recharts": "^2.10.0",
+        "remotion": "^4.0.450",
         "resend": "^6.12.0",
         "tailwind-merge": "^2.2.0",
         "zod": "^3.22.0",
